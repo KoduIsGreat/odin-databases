@@ -17,13 +17,8 @@ Conn :: struct {
 // The caller must call checkin() when done.
 checkout :: proc(db: ^DB) -> (Conn, Error) {
 	handle, created_at, err := pool_acquire(db)
-	if err != nil { return {}, err }
-	return Conn{
-		db         = db,
-		handle     = handle,
-		driver     = db.driver,
-		created_at = created_at,
-	}, nil
+	if err != nil {return {}, err}
+	return Conn{db = db, handle = handle, driver = db.driver, created_at = created_at}, nil
 }
 
 // checkin returns a connection to the pool.
@@ -41,14 +36,9 @@ conn_exec :: proc(conn: ^Conn, query_str: string, args: []Value) -> (Result, Err
 @(private)
 conn_query :: proc(conn: ^Conn, query_str: string, args: []Value) -> (Rows, Error) {
 	handle, err := conn.driver.query(conn.handle, query_str, args)
-	if err != nil { return {}, err }
+	if err != nil {return {}, err}
 
 	// Rows from an explicit Conn do NOT release the connection.
 	// The caller manages the Conn lifecycle separately.
-	return Rows{
-		db     = nil,
-		conn   = conn.handle,
-		handle = handle,
-		driver = conn.driver,
-	}, nil
+	return Rows{db = nil, conn = conn.handle, handle = handle, driver = conn.driver}, nil
 }

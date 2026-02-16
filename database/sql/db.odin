@@ -7,10 +7,24 @@ import "core:time"
 // --- Overloaded public API ---
 // These dispatch on the first parameter type (^DB, ^Conn, ^Tx).
 
-exec    :: proc{db_exec, conn_exec, tx_exec}
-query   :: proc{db_query, conn_query, tx_query}
-prepare :: proc{conn_prepare, tx_prepare}
-begin   :: proc{db_begin, conn_begin}
+exec :: proc {
+	db_exec,
+	conn_exec,
+	tx_exec,
+}
+query :: proc {
+	db_query,
+	conn_query,
+	tx_query,
+}
+prepare :: proc {
+	conn_prepare,
+	tx_prepare,
+}
+begin :: proc {
+	db_begin,
+	conn_begin,
+}
 
 // --- DB ---
 
@@ -25,7 +39,7 @@ DB :: struct {
 	mu:           sync.Mutex,
 	free_conns:   [dynamic]Pool_Conn,
 	num_open:     int,
-	max_open:     int,  // 0 = unlimited
+	max_open:     int, // 0 = unlimited
 	max_idle:     int,
 	max_lifetime: time.Duration,
 	closed:       bool,
@@ -40,11 +54,11 @@ Pool_Conn :: struct {
 // open creates a new DB handle. No connections are opened until first use.
 open :: proc(driver: ^Driver, dsn: string, allocator := context.allocator) -> (^DB, Error) {
 	db := new(DB, allocator)
-	db.driver    = driver
-	db.dsn       = dsn
+	db.driver = driver
+	db.dsn = dsn
 	db.allocator = allocator
-	db.max_open  = 0  // unlimited
-	db.max_idle  = 2
+	db.max_open = 0 // unlimited
+	db.max_idle = 2
 	db.free_conns = make([dynamic]Pool_Conn, allocator)
 	return db, nil
 }
@@ -92,7 +106,7 @@ set_conn_max_lifetime :: proc(db: ^DB, d: time.Duration) {
 
 ping :: proc(db: ^DB) -> Error {
 	conn, _, err := pool_acquire(db)
-	if err != nil { return err }
+	if err != nil {return err}
 	defer pool_release(db, conn, time.now())
 	return db.driver.ping(conn)
 }
@@ -100,7 +114,7 @@ ping :: proc(db: ^DB) -> Error {
 @(private)
 db_exec :: proc(db: ^DB, query_str: string, args: []Value) -> (Result, Error) {
 	conn, created_at, err := pool_acquire(db)
-	if err != nil { return {}, err }
+	if err != nil {return {}, err}
 	defer pool_release(db, conn, created_at)
 	return db.driver.exec(conn, query_str, args)
 }
@@ -110,7 +124,7 @@ db_exec :: proc(db: ^DB, query_str: string, args: []Value) -> (Result, Error) {
 @(private)
 db_query :: proc(db: ^DB, query_str: string, args: []Value) -> (Rows, Error) {
 	conn, _, cerr := pool_acquire(db)
-	if cerr != nil { return {}, cerr }
+	if cerr != nil {return {}, cerr}
 
 	handle, qerr := db.driver.query(conn, query_str, args)
 	if qerr != nil {
@@ -118,12 +132,12 @@ db_query :: proc(db: ^DB, query_str: string, args: []Value) -> (Rows, Error) {
 		return {}, qerr
 	}
 
-	return Rows{
-		db     = db,   // non-nil = Rows owns the conn
-		conn   = conn,
-		handle = handle,
-		driver = db.driver,
-	}, nil
+	return Rows {
+			db     = db, // non-nil = Rows owns the conn
+			conn   = conn,
+			handle = handle,
+			driver = db.driver,
+		}, nil
 }
 
 // --- Connection pool internals ---
@@ -189,10 +203,7 @@ pool_release :: proc(db: ^DB, conn: Conn_Handle, created_at: time.Time) {
 	}
 
 	if len(db.free_conns) < db.max_idle {
-		append(&db.free_conns, Pool_Conn{
-			handle     = conn,
-			created_at = created_at,
-		})
+		append(&db.free_conns, Pool_Conn{handle = conn, created_at = created_at})
 	} else {
 		db.num_open -= 1
 		db.driver.close_conn(conn)

@@ -10,21 +10,28 @@ Driver :: struct {
 	// Connection lifecycle.
 	// allocator is provided for driver-side Odin allocations (wrapper structs, etc).
 	// The underlying C library manages its own memory separately.
-	open:       proc(driver_data: rawptr, dsn: string, allocator: mem.Allocator) -> (Conn_Handle, Error),
-	close_conn: proc(conn: Conn_Handle) -> Error,
-	ping:       proc(conn: Conn_Handle) -> Error,
-	reset:      proc(conn: Conn_Handle) -> Error,
+	open:         proc(
+		driver_data: rawptr,
+		dsn: string,
+		allocator: mem.Allocator,
+	) -> (
+		Conn_Handle,
+		Error,
+	),
+	close_conn:   proc(conn: Conn_Handle) -> Error,
+	ping:         proc(conn: Conn_Handle) -> Error,
+	reset:        proc(conn: Conn_Handle) -> Error,
 
 	// Direct execution (fast path — no prepared statement)
-	exec:  proc(conn: Conn_Handle, query: string, args: []Value) -> (Result, Error),
-	query: proc(conn: Conn_Handle, query: string, args: []Value) -> (Rows_Handle, Error),
+	exec:         proc(conn: Conn_Handle, query: string, args: []Value) -> (Result, Error),
+	query:        proc(conn: Conn_Handle, query: string, args: []Value) -> (Rows_Handle, Error),
 
 	// Prepared statements
-	prepare:    proc(conn: Conn_Handle, query: string) -> (Stmt_Handle, Error),
-	stmt_exec:  proc(stmt: Stmt_Handle, args: []Value) -> (Result, Error),
-	stmt_query: proc(stmt: Stmt_Handle, args: []Value) -> (Rows_Handle, Error),
-	stmt_close: proc(stmt: Stmt_Handle) -> Error,
-	stmt_reset: proc(stmt: Stmt_Handle) -> Error,
+	prepare:      proc(conn: Conn_Handle, query: string) -> (Stmt_Handle, Error),
+	stmt_exec:    proc(stmt: Stmt_Handle, args: []Value) -> (Result, Error),
+	stmt_query:   proc(stmt: Stmt_Handle, args: []Value) -> (Rows_Handle, Error),
+	stmt_close:   proc(stmt: Stmt_Handle) -> Error,
+	stmt_reset:   proc(stmt: Stmt_Handle) -> Error,
 
 	// Rows — values returned by rows_next have borrowed semantics.
 	// They are valid only until the next rows_next call or rows_close.
@@ -33,13 +40,13 @@ Driver :: struct {
 	rows_close:   proc(rows: Rows_Handle) -> Error,
 
 	// Transactions
-	begin:       proc(conn: Conn_Handle, opts: Tx_Options) -> (Tx_Handle, Error),
-	tx_commit:   proc(tx: Tx_Handle) -> Error,
-	tx_rollback: proc(tx: Tx_Handle) -> Error,
+	begin:        proc(conn: Conn_Handle, opts: Tx_Options) -> (Tx_Handle, Error),
+	tx_commit:    proc(tx: Tx_Handle) -> Error,
+	tx_rollback:  proc(tx: Tx_Handle) -> Error,
 
 	// Driver-owned opaque state (e.g. library handle, shared config).
 	// Passed to open() so drivers can access shared resources.
-	data: rawptr,
+	data:         rawptr,
 }
 
 // Opaque handles — the sql package never looks inside these.
@@ -47,4 +54,4 @@ Driver :: struct {
 Conn_Handle :: distinct rawptr
 Stmt_Handle :: distinct rawptr
 Rows_Handle :: distinct rawptr
-Tx_Handle   :: distinct rawptr
+Tx_Handle :: distinct rawptr

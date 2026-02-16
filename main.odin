@@ -21,7 +21,11 @@ main :: proc() {
 	}
 	defer sql.close(db)
 
-	_, err := sql.exec(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, created_at DATETIME)", {})
+	_, err := sql.exec(
+		db,
+		"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, created_at DATETIME)",
+		{},
+	)
 	if err != nil {
 		fmt.eprintfln("create table: %v", err)
 		return
@@ -29,26 +33,48 @@ main :: proc() {
 
 	// Insert with time values
 	now := time.now()
-	_, err = sql.exec(db, "INSERT INTO users (name, age, created_at) VALUES (?, ?, ?)", {"Alice", i64(30), now})
-	if err != nil { fmt.eprintfln("insert: %v", err); return }
-	_, err = sql.exec(db, "INSERT INTO users (name, age, created_at) VALUES (?, ?, ?)", {"Bob", i64(25), now})
-	if err != nil { fmt.eprintfln("insert: %v", err); return }
-	_, err = sql.exec(db, "INSERT INTO users (name, age, created_at) VALUES (?, ?, ?)", {"Charlie", i64(35), now})
-	if err != nil { fmt.eprintfln("insert: %v", err); return }
+	_, err = sql.exec(
+		db,
+		"INSERT INTO users (name, age, created_at) VALUES (?, ?, ?)",
+		{"Alice", i64(30), now},
+	)
+	if err != nil {fmt.eprintfln("insert: %v", err);return}
+	_, err = sql.exec(
+		db,
+		"INSERT INTO users (name, age, created_at) VALUES (?, ?, ?)",
+		{"Bob", i64(25), now},
+	)
+	if err != nil {fmt.eprintfln("insert: %v", err);return}
+	_, err = sql.exec(
+		db,
+		"INSERT INTO users (name, age, created_at) VALUES (?, ?, ?)",
+		{"Charlie", i64(35), now},
+	)
+	if err != nil {fmt.eprintfln("insert: %v", err);return}
 
 	// Scan into struct
 	fmt.println("--- scan into struct ---")
 	{
 		rows, qerr := sql.query(db, "SELECT id, name, age, created_at FROM users", {})
-		if qerr != nil { fmt.eprintfln("query: %v", qerr); return }
+		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
 		defer sql.close_rows(&rows)
 
 		user: User
 		for sql.scan(&rows, &user) {
 			yr, mo, dy := time.date(user.created_at)
 			hr, mn, sc := time.clock(user.created_at)
-			fmt.printfln("  id=%v  name=%v  age=%v  created_at=%4d-%02d-%02d %02d:%02d:%02d",
-				user.id, user.name, user.age, yr, int(mo), dy, hr, mn, sc)
+			fmt.printfln(
+				"  id=%v  name=%v  age=%v  created_at=%4d-%02d-%02d %02d:%02d:%02d",
+				user.id,
+				user.name,
+				user.age,
+				yr,
+				int(mo),
+				dy,
+				hr,
+				mn,
+				sc,
+			)
 		}
 	}
 
@@ -60,7 +86,7 @@ main :: proc() {
 		}
 
 		rows, qerr := sql.query(db, "SELECT id, name, age FROM users", {})
-		if qerr != nil { fmt.eprintfln("query: %v", qerr); return }
+		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
 		defer sql.close_rows(&rows)
 
 		n: NameOnly
@@ -73,15 +99,15 @@ main :: proc() {
 	fmt.println("\n--- scan with prepared stmt ---")
 	{
 		conn, cerr := sql.checkout(db)
-		if cerr != nil { fmt.eprintfln("checkout: %v", cerr); return }
+		if cerr != nil {fmt.eprintfln("checkout: %v", cerr);return}
 		defer sql.checkin(&conn)
 
 		stmt, perr := sql.prepare(&conn, "SELECT name, age FROM users WHERE age > ?")
-		if perr != nil { fmt.eprintfln("prepare: %v", perr); return }
+		if perr != nil {fmt.eprintfln("prepare: %v", perr);return}
 		defer sql.close_stmt(&stmt)
 
 		srows, serr := sql.stmt_query(&stmt, {i64(26)})
-		if serr != nil { fmt.eprintfln("stmt_query: %v", serr); return }
+		if serr != nil {fmt.eprintfln("stmt_query: %v", serr);return}
 		defer sql.close_rows(&srows)
 
 		user: User
@@ -94,7 +120,7 @@ main :: proc() {
 	fmt.println("\n--- scan single row ---")
 	{
 		rows, qerr := sql.query(db, "SELECT name, age FROM users WHERE id = ?", {i64(1)})
-		if qerr != nil { fmt.eprintfln("query: %v", qerr); return }
+		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
 		defer sql.close_rows(&rows)
 
 		user: User
@@ -107,18 +133,24 @@ main :: proc() {
 	fmt.println("\n--- transaction + verify ---")
 	{
 		tx, terr := sql.begin(db)
-		if terr != nil { fmt.eprintfln("begin: %v", terr); return }
+		if terr != nil {fmt.eprintfln("begin: %v", terr);return}
 
-		_, err = sql.exec(&tx, "INSERT INTO users (name, age, created_at) VALUES (?, ?, ?)", {"Diana", i64(28), now})
-		if err != nil { sql.rollback(&tx); fmt.eprintfln("tx insert: %v", err); return }
+		_, err = sql.exec(
+			&tx,
+			"INSERT INTO users (name, age, created_at) VALUES (?, ?, ?)",
+			{"Diana", i64(28), now},
+		)
+		if err != nil {sql.rollback(&tx);fmt.eprintfln("tx insert: %v", err);return}
 		sql.commit(&tx)
 	}
 	{
 		rows, qerr := sql.query(db, "SELECT count(*) as total FROM users", {})
-		if qerr != nil { fmt.eprintfln("query: %v", qerr); return }
+		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
 		defer sql.close_rows(&rows)
 
-		Count :: struct { total: i64 }
+		Count :: struct {
+			total: i64,
+		}
 		c: Count
 		if sql.scan(&rows, &c) {
 			fmt.printfln("  total users: %v", c.total)

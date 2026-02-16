@@ -34,7 +34,7 @@ Result :: struct {
 // Column describes a column in a result set.
 Column :: struct {
 	name:     string,
-	type_id:  typeid,    // Odin type that best represents this column
+	type_id:  typeid, // Odin type that best represents this column
 	nullable: bool,
 }
 

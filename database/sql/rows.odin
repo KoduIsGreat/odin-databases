@@ -19,8 +19,8 @@ package sql
 //       // use dest here — valid until close_rows
 //   }
 Rows :: struct {
-	db:     ^DB,          // non-nil = owns the conn, release on close
-	conn:   Conn_Handle,  // only used for pool release
+	db:     ^DB, // non-nil = owns the conn, release on close
+	conn:   Conn_Handle, // only used for pool release
 	handle: Rows_Handle,
 	driver: ^Driver,
 	closed: bool,
@@ -28,7 +28,7 @@ Rows :: struct {
 
 // columns returns column metadata for the result set.
 columns :: proc(rows: ^Rows) -> []Column {
-	if rows.closed { return nil }
+	if rows.closed {return nil}
 	return rows.driver.rows_columns(rows.handle)
 }
 
@@ -39,14 +39,14 @@ columns :: proc(rows: ^Rows) -> []Column {
 // Values written to dest are BORROWED — valid only until the next
 // call to next() or close_rows().
 next :: proc(rows: ^Rows, dest: []Value) -> bool {
-	if rows.closed { return false }
+	if rows.closed {return false}
 	return rows.driver.rows_next(rows.handle, dest)
 }
 
 // close_rows closes the result set. If the Rows owns a connection
 // (from a convenience db query), it is returned to the pool.
 close_rows :: proc(rows: ^Rows) -> Error {
-	if rows.closed { return nil }
+	if rows.closed {return nil}
 	rows.closed = true
 	err := rows.driver.rows_close(rows.handle)
 	if rows.db != nil {
