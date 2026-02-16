@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:odin-lang.org)",
+      "WebFetch(domain:pkg.odin-lang.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.gingerbill.org)",
+      "Bash(odin build:*)",
+      "Bash(./main:*)"
+    ]
+  }
+}
