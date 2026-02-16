@@ -21,7 +21,7 @@ MAX_SCAN_COLS :: 64
 //   for sql.scan(&rows, &user) {
 //       fmt.println(user.name)
 //   }
-scan :: proc(rows: ^Rows, dest: ^$T) -> bool where intrinsics.type_is_struct(T) {
+scan_struct :: proc(rows: ^Rows, dest: ^$T) -> bool where intrinsics.type_is_struct(T) {
 	if rows.closed {return false}
 
 	cols := columns(rows)
@@ -47,6 +47,51 @@ scan :: proc(rows: ^Rows, dest: ^$T) -> bool where intrinsics.type_is_struct(T) 
 	}
 
 	return true
+}
+
+// scan_values advances to the next row and writes column values
+// positionally into the provided pointer arguments.
+//
+// Each argument must be a pointer (^int, ^string, ^bool, etc.).
+// Column 0 → first arg, column 1 → second arg, and so on.
+//
+// Returns false when no more rows remain.
+//
+// Values written to string/[]byte destinations are BORROWED — valid
+// only until the next scan_values() call or close_rows().
+//
+// Usage:
+//   name: string
+//   age:  int
+//   for sql.scan_values(&rows, &name, &age) {
+//       fmt.println(name, age)
+//   }
+scan_values :: proc(rows: ^Rows, dests: ..any) -> bool {
+	if rows.closed {return false}
+
+	ncols := len(dests)
+	assert(ncols <= MAX_SCAN_COLS)
+
+	values: [MAX_SCAN_COLS]Value
+	if !next(rows, values[:ncols]) {return false}
+
+	for i in 0 ..< ncols {
+		d := dests[i]
+		// d.id is ^T, d.data points to the pointer value itself.
+		// Dereference to get the actual destination address.
+		ptr_info := runtime.type_info_base(type_info_of(d.id))
+		p, ok := ptr_info.variant.(runtime.Type_Info_Pointer)
+		assert(ok, "scan_values: each argument must be a pointer")
+		dest_ptr := (^rawptr)(d.data)^
+		set_field(dest_ptr, 0, p.elem.id, values[i])
+	}
+
+	return true
+}
+
+scan :: proc {
+	scan_struct,
+	scan_values,
 }
 
 @(private)

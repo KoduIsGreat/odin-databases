@@ -129,6 +129,33 @@ main :: proc() {
 		}
 	}
 
+	// Scan into individual variables
+	fmt.println("\n--- scan_values ---")
+	{
+		rows, qerr := sql.query(db, "SELECT name, age FROM users", {})
+		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
+		defer sql.close_rows(&rows)
+
+		name: string
+		age: int
+		for sql.scan(&rows, &name, &age) {
+			fmt.printfln("  name=%v  age=%v", name, age)
+		}
+	}
+
+	// Single value scan
+	fmt.println("\n--- scan single value ---")
+	{
+		rows, qerr := sql.query(db, "SELECT count(*) FROM users", {})
+		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
+		defer sql.close_rows(&rows)
+
+		total: i64
+		if sql.scan(&rows, &total) {
+			fmt.printfln("  total=%v", total)
+		}
+	}
+
 	// Transaction + scan to verify
 	fmt.println("\n--- transaction + verify ---")
 	{
