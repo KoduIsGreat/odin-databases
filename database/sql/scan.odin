@@ -14,6 +14,8 @@ import "core:time"
 //
 // String and []byte values are cloned using context.allocator,
 // so they remain valid after close_rows(). The caller owns the memory.
+// For detached rows (from query_row), values are already owned and
+// are moved directly without cloning.
 //
 // Usage:
 //   for sql.next(&rows) {
@@ -50,6 +52,8 @@ scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_st
 //
 // String and []byte values are cloned using context.allocator,
 // so they remain valid after close_rows(). The caller owns the memory.
+// For detached rows (from query_row), values are already owned and
+// are moved directly without cloning.
 //
 // Usage:
 //   for sql.next(&rows) {
@@ -86,15 +90,18 @@ scan_values_impl :: proc(rows: ^Rows, dests: []any) -> Error {
 }
 
 // row_scan_struct scans from a Row (returned by query_row).
-// If the Row carries an error (query failure or no rows), it is
-// returned immediately without scanning.
+// The Row's underlying connection is already released, so this
+// only reads from buffered values. If the Row carries an error
+// (query failure or no rows), it is returned immediately.
 row_scan_struct :: proc(row: ^Row, dest: ^$T) -> Error where intrinsics.type_is_struct(T) {
 	if row.err != nil {return row.err}
 	return scan_struct(&row.rows, dest)
 }
 
 // row_scan_values scans from a Row (returned by query_row).
-// If the Row carries an error, it is returned immediately.
+// The Row's underlying connection is already released, so this
+// only reads from buffered values. If the Row carries an error,
+// it is returned immediately.
 row_scan_values :: proc(row: ^Row, dests: ..any) -> Error {
 	if row.err != nil {return row.err}
 	return scan_values_impl(&row.rows, dests)

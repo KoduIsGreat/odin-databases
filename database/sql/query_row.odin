@@ -3,11 +3,12 @@ package sql
 import "core:time"
 
 // query_row executes a query expected to return at most one row.
-// It advances to the first row automatically. Any query error or
+// It advances to the first row and eagerly releases the underlying
+// connection back to the pool (via detach_rows). Any query error or
 // "no rows" is stored in Row.err and surfaced when scan is called.
 //
-// scan on a Row automatically closes the underlying result set,
-// so the caller does not need to close it manually.
+// Because the connection is released in query_row itself, there is
+// no need for the caller to close the Row after scanning.
 //
 // Usage:
 //   row := sql.query_row(db, "SELECT * FROM users WHERE id = ?", i64(1))
@@ -80,8 +81,9 @@ tx_query_row :: proc(tx: ^Tx, query_str: string, args: ..Value) -> Row {
 	return row
 }
 
-// close_row closes the underlying result set and releases the connection
-// if owned. Safe to call on a Row with an error (no-op).
+// close_row is a no-op for detached rows (from query_row), since the
+// connection is already released. Provided for symmetry if callers
+// want a defer pattern. Safe to call on a Row with an error.
 close_row :: proc(row: ^Row) -> Error {
 	return close_rows(&row.rows)
 }

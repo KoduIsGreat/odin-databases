@@ -5,10 +5,11 @@ import "core:time"
 // Value is the set of types that can be passed as query arguments
 // or read from result columns. Drivers must accept and produce these.
 //
-// BORROWED SEMANTICS: Values read from rows (via next()) point into
-// driver-owned memory. They are valid only until the next next() call
-// or close_rows(). If you need to keep a string or []byte beyond that
-// lifetime, copy it explicitly (e.g. strings.clone).
+// Values buffered by next() point into driver-owned memory and are
+// valid only until the next call to next() or close_rows(). However,
+// scan() automatically clones string and []byte values using
+// context.allocator, so scanned results remain valid after the
+// Rows is closed. The caller owns the cloned memory.
 Value :: union {
 	bool,
 	i64,

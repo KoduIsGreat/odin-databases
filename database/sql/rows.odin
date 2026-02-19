@@ -4,12 +4,18 @@ import "core:strings"
 
 MAX_SCAN_COLS :: 64
 
-// Rows is the result of a query.
+// Rows is the result of a query. Call next() to advance to each row,
+// then scan() to read column values.
 //
 // If created by a convenience db query, Rows owns the connection and
 // releases it on close_rows(). If created from an explicit Conn or Tx,
 // the caller manages the connection — close_rows() only closes the
 // driver-level result set.
+//
+// next() buffers column values internally. These values are borrowed
+// from the driver and valid only until the next call to next() or
+// close_rows(). scan() clones string and []byte data using
+// context.allocator so the scanned results outlive the Rows.
 //
 // Usage:
 //   rows := sql.query(db, "SELECT ...", args)
@@ -33,6 +39,11 @@ Rows :: struct {
 	_detached:  bool, // true = values are owned, scan should not clone
 }
 
+// Row holds the result of query_row(). The first row is already
+// buffered and the connection has been released (detached). If the
+// query failed or returned no rows, err is set and surfaced at scan
+// time. Because the underlying resources are already released, there
+// is no need to close a Row.
 Row :: struct {
 	err:  Error,
 	rows: Rows,
@@ -77,8 +88,10 @@ close_rows :: proc(rows: ^Rows) -> Error {
 }
 
 // detach_rows closes the driver result set and releases the connection,
-// but preserves the buffered row values and has_row state. Used by
-// query_row to eagerly release resources while keeping data for scan.
+// but preserves the buffered row values and has_row state. String and
+// []byte values are cloned before the driver frees them. After detach,
+// _detached is set so that scan() moves values directly instead of
+// cloning again. Used by query_row to eagerly release resources.
 @(private)
 detach_rows :: proc(rows: ^Rows) -> Error {
 	if rows.closed {return nil}

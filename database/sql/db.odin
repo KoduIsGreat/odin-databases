@@ -57,6 +57,9 @@ Pool_Conn :: struct {
 }
 
 // open creates a new DB handle. No connections are opened until first use.
+// The provided allocator is used for pool internals and driver connections.
+// Scan output (cloned strings and []byte) uses context.allocator at the
+// call site, so callers can control scan memory separately (e.g. with an arena).
 open :: proc(driver: ^Driver, dsn: string, allocator := context.allocator) -> (^DB, Error) {
 	db := new(DB, allocator)
 	db.driver = driver

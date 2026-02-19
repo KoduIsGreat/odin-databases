@@ -7,7 +7,11 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:www.gingerbill.org)",
       "Bash(odin build:*)",
-      "Bash(./main:*)"
+      "Bash(./main:*)",
+      "Bash(./basic_example:*)",
+      "Bash(./main_example:*)",
+      "Bash(odin run:*)",
+      "Bash(git add:*)"
     ]
   }
 }
