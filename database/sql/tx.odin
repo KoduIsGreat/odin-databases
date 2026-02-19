@@ -54,7 +54,7 @@ conn_begin :: proc(conn: ^Conn, opts := Tx_Options{}) -> (Tx, Error) {
 }
 
 @(private)
-tx_exec :: proc(tx: ^Tx, query_str: string, args: []Value) -> (Result, Error) {
+tx_exec :: proc(tx: ^Tx, query_str: string, args: ..Value) -> (Result, Error) {
 	if tx.done {
 		return {}, Driver_Error{code = 0, message = "sql: transaction already completed"}
 	}
@@ -64,7 +64,7 @@ tx_exec :: proc(tx: ^Tx, query_str: string, args: []Value) -> (Result, Error) {
 // Rows from a Tx do NOT own the connection — close them before
 // commit/rollback.
 @(private)
-tx_query :: proc(tx: ^Tx, query_str: string, args: []Value) -> (Rows, Error) {
+tx_query :: proc(tx: ^Tx, query_str: string, args: ..Value) -> (Rows, Error) {
 	if tx.done {
 		return {}, Driver_Error{code = 0, message = "sql: transaction already completed"}
 	}

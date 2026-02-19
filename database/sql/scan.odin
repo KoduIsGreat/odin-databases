@@ -2,100 +2,113 @@ package sql
 
 import "base:intrinsics"
 import "base:runtime"
+import "core:mem"
+import "core:strings"
 import "core:time"
 
-MAX_SCAN_COLS :: 64
-
-// scan advances to the next row and maps column values into struct
-// fields by matching column names to field names (exact match).
+// scan_struct maps the current row's column values into struct fields
+// by matching column names to field names (exact match).
 //
-// Returns false when no more rows remain.
 // Fields with no matching column are left unchanged.
 // Columns with no matching field are silently skipped.
 //
-// Values written to string/[]byte fields are BORROWED — valid only
-// until the next scan() call or close_rows().
+// String and []byte values are cloned using context.allocator,
+// so they remain valid after close_rows(). The caller owns the memory.
 //
 // Usage:
-//   user: User
-//   for sql.scan(&rows, &user) {
-//       fmt.println(user.name)
+//   for sql.next(&rows) {
+//       user: User
+//       sql.scan(&rows, &user)
 //   }
-scan_struct :: proc(rows: ^Rows, dest: ^$T) -> bool where intrinsics.type_is_struct(T) {
-	if rows.closed {return false}
-
-	cols := columns(rows)
-	if cols == nil {return false}
-
-	ncols := len(cols)
-	assert(ncols <= MAX_SCAN_COLS)
-
-	values: [MAX_SCAN_COLS]Value
-	if !next(rows, values[:ncols]) {return false}
+scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_struct(T) {
+	if !rows.has_row {
+		return Scan_Error.No_Row
+	}
 
 	info := runtime.type_info_base(type_info_of(T))
 	si := info.variant.(runtime.Type_Info_Struct)
 
-	for ci in 0 ..< ncols {
-		col_name := cols[ci].name
+	for ci in 0 ..< rows.col_count {
+		col_name := rows._cols[ci].name
 		for fi in 0 ..< si.field_count {
 			if si.names[fi] == col_name {
-				set_field(dest, si.offsets[fi], si.types[fi].id, values[ci])
+				set_field(dest, si.offsets[fi], si.types[fi].id, rows._values[ci], rows._detached)
 				break
 			}
 		}
 	}
 
-	return true
+	return nil
 }
 
-// scan_values advances to the next row and writes column values
-// positionally into the provided pointer arguments.
+// scan_values writes the current row's column values positionally
+// into the provided pointer arguments.
 //
-// Each argument must be a pointer (^int, ^string, ^bool, etc.).
-// Column 0 → first arg, column 1 → second arg, and so on.
+// Each element must be a pointer (^int, ^string, ^bool, etc.).
+// Column 0 → first element, column 1 → second element, and so on.
+// The number of destinations must match the number of columns.
 //
-// Returns false when no more rows remain.
-//
-// Values written to string/[]byte destinations are BORROWED — valid
-// only until the next scan_values() call or close_rows().
+// String and []byte values are cloned using context.allocator,
+// so they remain valid after close_rows(). The caller owns the memory.
 //
 // Usage:
-//   name: string
-//   age:  int
-//   for sql.scan_values(&rows, &name, &age) {
-//       fmt.println(name, age)
+//   for sql.next(&rows) {
+//       name: string
+//       age:  int
+//       sql.scan(&rows, &name, &age)
 //   }
-scan_values :: proc(rows: ^Rows, dests: ..any) -> bool {
-	if rows.closed {return false}
+scan_values :: proc(rows: ^Rows, dests: ..any) -> Error {
+	return scan_values_impl(rows, dests)
+}
 
-	ncols := len(dests)
-	assert(ncols <= MAX_SCAN_COLS)
-
-	values: [MAX_SCAN_COLS]Value
-	if !next(rows, values[:ncols]) {return false}
-
-	for i in 0 ..< ncols {
-		d := dests[i]
-		// d.id is ^T, d.data points to the pointer value itself.
-		// Dereference to get the actual destination address.
-		ptr_info := runtime.type_info_base(type_info_of(d.id))
-		p, ok := ptr_info.variant.(runtime.Type_Info_Pointer)
-		assert(ok, "scan_values: each argument must be a pointer")
-		dest_ptr := (^rawptr)(d.data)^
-		set_field(dest_ptr, 0, p.elem.id, values[i])
+@(private)
+scan_values_impl :: proc(rows: ^Rows, dests: []any) -> Error {
+	if !rows.has_row {
+		return Scan_Error.No_Row
 	}
 
-	return true
+	if len(dests) != rows.col_count {
+		return Scan_Error.Column_Count_Mismatch
+	}
+
+	for i in 0 ..< len(dests) {
+		d := dests[i]
+		ptr_info := runtime.type_info_base(type_info_of(d.id))
+		p, ok := ptr_info.variant.(runtime.Type_Info_Pointer)
+		if !ok {
+			return Scan_Error.Dest_Not_Pointer
+		}
+		dest_ptr := (^rawptr)(d.data)^
+		set_field(dest_ptr, 0, p.elem.id, rows._values[i], rows._detached)
+	}
+
+	return nil
+}
+
+// row_scan_struct scans from a Row (returned by query_row).
+// If the Row carries an error (query failure or no rows), it is
+// returned immediately without scanning.
+row_scan_struct :: proc(row: ^Row, dest: ^$T) -> Error where intrinsics.type_is_struct(T) {
+	if row.err != nil {return row.err}
+	return scan_struct(&row.rows, dest)
+}
+
+// row_scan_values scans from a Row (returned by query_row).
+// If the Row carries an error, it is returned immediately.
+row_scan_values :: proc(row: ^Row, dests: ..any) -> Error {
+	if row.err != nil {return row.err}
+	return scan_values_impl(&row.rows, dests)
 }
 
 scan :: proc {
+	row_scan_struct,
+	row_scan_values,
 	scan_struct,
 	scan_values,
 }
 
 @(private)
-set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value) {
+set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value, owned: bool) {
 	ptr := rawptr(uintptr(base) + offset)
 
 	#partial switch v in val {
@@ -129,11 +142,17 @@ set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value) {
 		}
 	case string:
 		if tid == string {
-			(^string)(ptr)^ = v
+			(^string)(ptr)^ = v if owned else strings.clone(v)
 		}
 	case []byte:
 		if tid == []byte {
-			(^[]byte)(ptr)^ = v
+			if owned {
+				(^[]byte)(ptr)^ = v
+			} else {
+				cloned := make([]byte, len(v))
+				copy(cloned, v)
+				(^[]byte)(ptr)^ = cloned
+			}
 		}
 	case bool:
 		if tid == bool {

@@ -29,12 +29,12 @@ checkin :: proc(conn: ^Conn) -> Error {
 }
 
 @(private)
-conn_exec :: proc(conn: ^Conn, query_str: string, args: []Value) -> (Result, Error) {
+conn_exec :: proc(conn: ^Conn, query_str: string, args: ..Value) -> (Result, Error) {
 	return conn.driver.exec(conn.handle, query_str, args)
 }
 
 @(private)
-conn_query :: proc(conn: ^Conn, query_str: string, args: []Value) -> (Rows, Error) {
+conn_query :: proc(conn: ^Conn, query_str: string, args: ..Value) -> (Rows, Error) {
 	handle, err := conn.driver.query(conn.handle, query_str, args)
 	if err != nil {return {}, err}
 

@@ -25,6 +25,11 @@ begin :: proc {
 	db_begin,
 	conn_begin,
 }
+query_row :: proc {
+	db_query_row,
+	conn_query_row,
+	tx_query_row,
+}
 
 // --- DB ---
 
@@ -112,7 +117,7 @@ ping :: proc(db: ^DB) -> Error {
 }
 
 @(private)
-db_exec :: proc(db: ^DB, query_str: string, args: []Value) -> (Result, Error) {
+db_exec :: proc(db: ^DB, query_str: string, args: ..Value) -> (Result, Error) {
 	conn, created_at, err := pool_acquire(db)
 	if err != nil {return {}, err}
 	defer pool_release(db, conn, created_at)
@@ -122,7 +127,7 @@ db_exec :: proc(db: ^DB, query_str: string, args: []Value) -> (Result, Error) {
 // Convenience query — the returned Rows owns the connection and
 // releases it back to the pool on close_rows().
 @(private)
-db_query :: proc(db: ^DB, query_str: string, args: []Value) -> (Rows, Error) {
+db_query :: proc(db: ^DB, query_str: string, args: ..Value) -> (Rows, Error) {
 	conn, _, cerr := pool_acquire(db)
 	if cerr != nil {return {}, cerr}
 

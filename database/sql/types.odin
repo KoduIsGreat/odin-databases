@@ -57,6 +57,7 @@ Error :: union {
 	Driver_Error,
 	Pool_Error,
 	Arg_Error,
+	Scan_Error,
 }
 
 Driver_Error :: struct {
@@ -73,4 +74,10 @@ Pool_Error :: enum {
 Arg_Error :: enum {
 	Invalid_Type,
 	Wrong_Count,
+}
+
+Scan_Error :: enum {
+	No_Row,
+	Column_Count_Mismatch,
+	Dest_Not_Pointer,
 }
