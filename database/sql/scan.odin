@@ -2,6 +2,7 @@ package sql
 
 import "base:intrinsics"
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 import "core:strings"
 import "core:time"
@@ -24,7 +25,7 @@ import "core:time"
 //   }
 scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_struct(T) {
 	if !rows.has_row {
-		return Scan_Error.No_Row
+		return Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}
 	}
 
 	info := runtime.type_info_base(type_info_of(T))
@@ -34,7 +35,21 @@ scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_st
 		col_name := rows._cols[ci].name
 		for fi in 0 ..< si.field_count {
 			if si.names[fi] == col_name {
-				set_field(dest, si.offsets[fi], si.types[fi].id, rows._values[ci], rows._detached)
+				if vtype := set_field(
+					dest,
+					si.offsets[fi],
+					si.types[fi].id,
+					rows._values[ci],
+					rows._detached,
+				); vtype != nil {
+					return Scan_Error {
+						kind = .Column_Type_Mismatch,
+						col_idx = ci,
+						col_name = col_name,
+						dest_type = type_of(dest^),
+						value_type = vtype,
+					}
+				}
 				break
 			}
 		}
@@ -68,11 +83,11 @@ scan_values :: proc(rows: ^Rows, dests: ..any) -> Error {
 @(private)
 scan_values_impl :: proc(rows: ^Rows, dests: []any) -> Error {
 	if !rows.has_row {
-		return Scan_Error.No_Row
+		return Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}
 	}
 
 	if len(dests) != rows.col_count {
-		return Scan_Error.Column_Count_Mismatch
+		return Scan_Error{kind = .Column_Count_Mismatch, col_idx = -1, col_name = ""}
 	}
 
 	for i in 0 ..< len(dests) {
@@ -80,10 +95,26 @@ scan_values_impl :: proc(rows: ^Rows, dests: []any) -> Error {
 		ptr_info := runtime.type_info_base(type_info_of(d.id))
 		p, ok := ptr_info.variant.(runtime.Type_Info_Pointer)
 		if !ok {
-			return Scan_Error.Dest_Not_Pointer
+			return Scan_Error {
+				kind = .Dest_Not_Pointer,
+				col_idx = i,
+				col_name = rows._cols[i].name,
+				dest_type = d.id,
+				value_type = rows._cols[i].type_id,
+			}
 		}
 		dest_ptr := (^rawptr)(d.data)^
-		set_field(dest_ptr, 0, p.elem.id, rows._values[i], rows._detached)
+		if vtype := set_field(dest_ptr, 0, p.elem.id, rows._values[i], rows._detached);
+		   vtype != nil {
+			return Scan_Error {
+				kind = .Column_Type_Mismatch,
+				col_idx = i,
+				col_name = rows._cols[i].name,
+				dest_type = d.id,
+				value_type = vtype,
+			}
+
+		}
 	}
 
 	return nil
@@ -115,7 +146,7 @@ scan :: proc {
 }
 
 @(private)
-set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value, owned: bool) {
+set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value, owned: bool) -> typeid {
 	ptr := rawptr(uintptr(base) + offset)
 
 	#partial switch v in val {
@@ -139,6 +170,8 @@ set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value, owned:
 			(^u16)(ptr)^ = u16(v)
 		case bool:
 			(^bool)(ptr)^ = v != 0
+		case:
+			return i64
 		}
 	case f64:
 		switch tid {
@@ -146,30 +179,29 @@ set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value, owned:
 			(^f64)(ptr)^ = v
 		case f32:
 			(^f32)(ptr)^ = f32(v)
+		case:
+			return f64
 		}
 	case string:
-		if tid == string {
-			(^string)(ptr)^ = v if owned else strings.clone(v)
-		}
+		if tid != string {return string}
+		(^string)(ptr)^ = v if owned else strings.clone(v)
 	case []byte:
-		if tid == []byte {
-			if owned {
-				(^[]byte)(ptr)^ = v
-			} else {
-				cloned := make([]byte, len(v))
-				copy(cloned, v)
-				(^[]byte)(ptr)^ = cloned
-			}
+		if tid != []byte {return []byte}
+		if owned {
+			(^[]byte)(ptr)^ = v
+		} else {
+			cloned := make([]byte, len(v))
+			copy(cloned, v)
+			(^[]byte)(ptr)^ = cloned
 		}
 	case bool:
-		if tid == bool {
-			(^bool)(ptr)^ = v
-		}
+		if tid != bool {return bool}
+		(^bool)(ptr)^ = v
 	case time.Time:
-		if tid == time.Time {
-			(^time.Time)(ptr)^ = v
-		}
+		if tid != time.Time {return time.Time}
+		(^time.Time)(ptr)^ = v
 	case Null:
 	// Leave field unchanged
 	}
+	return nil
 }

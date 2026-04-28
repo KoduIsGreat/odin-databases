@@ -1,2 +1,8 @@
 main
 test_db
+
+# Odin build artifacts
+*.bin
+*.exe
+sqlite/example/example
+sqlite/example/main

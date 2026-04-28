@@ -32,11 +32,11 @@ Rows :: struct {
 	closed:    bool,
 
 	// Current row state — filled by next()
-	_values:    [MAX_SCAN_COLS]Value,
-	_cols:      [MAX_SCAN_COLS]Column, // cached on first next()
-	col_count:  int,
-	has_row:    bool,
-	_detached:  bool, // true = values are owned, scan should not clone
+	col_count: int,
+	has_row:   bool,
+	_detached: bool, // true = values are owned, scan should not clone
+	_values:   [MAX_SCAN_COLS]Value,
+	_cols:     [MAX_SCAN_COLS]Column, // cached on first next()
 }
 
 // Row holds the result of query_row(). The first row is already

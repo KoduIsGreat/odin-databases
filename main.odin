@@ -4,7 +4,7 @@ import "core:fmt"
 import "core:time"
 
 import "database/sql"
-import "database/sqlite"
+import "drivers/sqlite"
 
 User :: struct {
 	id:         i64,

@@ -1,0 +1,50 @@
+// SQLite bindings config for odin-c-bindgen (obg).
+// See https://github.com/karl-zylinski/odin-c-bindgen for documentation.
+
+inputs = [
+	"input"
+]
+
+// Generated package goes here: sqlite/sqlite/sqlite3.odin
+output_folder = "sqlite"
+// Internal Odin package name for the generated bindings.
+// Different from `output_folder` so this doesn't collide with the higher-level
+// driver package (drivers/sqlite, which is `package sqlite`). Users still
+// import this via `bindings/sqlite/sqlite`; alias as you like.
+package_name  = "sqlite3"
+
+// Foreign import block lives in imports.odin (cross-platform).
+imports_file = "imports.odin"
+
+// Strip C prefixes so call sites read nicely:
+//   sqlite3_open(...)         -> sqlite.open(...)
+//   SQLITE_OK                 -> sqlite.OK
+//   sqlite3_stmt              -> sqlite.stmt   (struct/typedef)
+remove_function_prefix = "sqlite3_"
+remove_macro_prefix    = "SQLITE_"
+remove_type_prefix     = "sqlite3_"
+
+// `sqlite3_context` would otherwise become `context`, colliding with Odin's
+// implicit `context` keyword. Rename it.
+rename = {
+	"sqlite3_context" = "func_context"
+}
+
+// Don't force Ada_Case; SQLite's identifiers are conventional snake_case
+// and Odin programmers reading SQLite docs benefit from 1:1 names.
+force_ada_case_types = false
+
+// Help libclang find system headers (stdarg.h etc) on macOS.
+// On Linux these are usually found automatically; add /usr/include if not.
+// SQLite has a couple of #defines that cast integers to function pointers,
+// e.g. SQLITE_STATIC = ((sqlite3_destructor_type)0). obg can't translate the
+// C cast syntax. Drop them here and re-introduce them in sqlite3_footer.odin.
+remove = [
+	"SQLITE_STATIC"
+	"SQLITE_TRANSIENT"
+]
+
+clang_include_paths = [
+	"/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/14.0.3/include"
+	"/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include"
+]

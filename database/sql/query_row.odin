@@ -33,7 +33,7 @@ db_query_row :: proc(db: ^DB, query_str: string, args: ..Value) -> Row {
 	}
 	if !next(&row.rows) {
 		close_rows(&row.rows)
-		return Row{err = Scan_Error.No_Row}
+		return Row{err = Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}}
 	}
 	detach_rows(&row.rows)
 	return row
@@ -51,7 +51,7 @@ conn_query_row :: proc(conn: ^Conn, query_str: string, args: ..Value) -> Row {
 	}
 	if !next(&row.rows) {
 		close_rows(&row.rows)
-		return Row{err = Scan_Error.No_Row}
+		return Row{err = Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}}
 	}
 	detach_rows(&row.rows)
 	return row
@@ -60,9 +60,7 @@ conn_query_row :: proc(conn: ^Conn, query_str: string, args: ..Value) -> Row {
 @(private)
 tx_query_row :: proc(tx: ^Tx, query_str: string, args: ..Value) -> Row {
 	if tx.done {
-		return Row {
-			err = Driver_Error{code = 0, message = "sql: transaction already completed"},
-		}
+		return Row{err = Driver_Error{code = 0, message = "sql: transaction already completed"}}
 	}
 
 	handle, qerr := tx.driver.query(tx.conn_handle, query_str, args)
@@ -75,7 +73,7 @@ tx_query_row :: proc(tx: ^Tx, query_str: string, args: ..Value) -> Row {
 	}
 	if !next(&row.rows) {
 		close_rows(&row.rows)
-		return Row{err = Scan_Error.No_Row}
+		return Row{err = Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}}
 	}
 	detach_rows(&row.rows)
 	return row
