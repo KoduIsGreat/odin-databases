@@ -49,6 +49,25 @@ Row :: struct {
 	rows: Rows,
 }
 
+// --- Codegen accessors ---
+//
+// These small inline accessors exist so generated row-mapper code (see
+// tools/scangen) can read the buffered row state without reaching into
+// the underscore-prefixed fields directly. User code should normally
+// use scan() / scan_row() instead.
+
+row_value :: #force_inline proc(rows: ^Rows, i: int) -> Value {
+	return rows._values[i]
+}
+
+row_col_name :: #force_inline proc(rows: ^Rows, i: int) -> string {
+	return rows._cols[i].name
+}
+
+row_detached :: #force_inline proc(rows: ^Rows) -> bool {
+	return rows._detached
+}
+
 // columns returns column metadata for the result set.
 columns :: proc(rows: ^Rows) -> []Column {
 	if rows.closed {return nil}

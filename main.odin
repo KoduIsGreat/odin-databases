@@ -6,6 +6,7 @@ import "core:time"
 import "database/sql"
 import "drivers/sqlite"
 
+//+sql:scan
 User :: struct {
 	id:         i64,
 	name:       string,
@@ -65,7 +66,7 @@ main :: proc() {
 
 		for sql.next(&rows) {
 			user: User
-			sql.scan(&rows, &user)
+			scan(&rows, &user)
 			yr, mo, dy := time.date(user.created_at)
 			hr, mn, sc := time.clock(user.created_at)
 			fmt.printfln(
@@ -96,7 +97,7 @@ main :: proc() {
 
 		for sql.next(&rows) {
 			n: NameOnly
-			sql.scan(&rows, &n)
+			scan(&rows, &n)
 			fmt.printfln("  name=%v", n.name)
 		}
 	}
@@ -118,7 +119,7 @@ main :: proc() {
 
 		for sql.next(&srows) {
 			user: User
-			sql.scan(&srows, &user)
+			scan(&srows, &user)
 			fmt.printfln("  name=%v  age=%v", user.name, user.age)
 		}
 	}
@@ -132,7 +133,7 @@ main :: proc() {
 
 		if sql.next(&rows) {
 			user: User
-			sql.scan(&rows, &user)
+			scan(&rows, &user)
 			fmt.printfln("  name=%v  age=%v", user.name, user.age)
 		}
 	}
@@ -147,7 +148,7 @@ main :: proc() {
 		for sql.next(&rows) {
 			name: string
 			age: int
-			sql.scan(&rows, &name, &age)
+			scan(&rows, &name, &age)
 			fmt.printfln("  name=%v  age=%v", name, age)
 		}
 	}
@@ -160,7 +161,7 @@ main :: proc() {
 
 		if sql.next(&rows) {
 			user: User
-			sql.scan(&rows, &user.id, &user.name, &user.age, &user.created_at)
+			scan(&rows, &user.id, &user.name, &user.age, &user.created_at)
 			fmt.printfln(
 				"id=%v  name=%v  age=%v  created_at=%v",
 				user.id,
@@ -180,7 +181,7 @@ main :: proc() {
 
 		if sql.next(&rows) {
 			total: i64
-			sql.scan(&rows, &total)
+			scan(&rows, &total)
 			fmt.printfln("  total=%v", total)
 		}
 	}
@@ -211,7 +212,7 @@ main :: proc() {
 		}
 		if sql.next(&rows) {
 			c: Count
-			sql.scan(&rows, &c)
+			scan(&rows, &c)
 			fmt.printfln("  total users: %v", c.total)
 		}
 	}
