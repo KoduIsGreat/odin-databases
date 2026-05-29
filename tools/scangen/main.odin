@@ -116,6 +116,14 @@ source_of :: proc(file: ^ast.File, node: ^ast.Node) -> string {
 	return file.src[node.pos.offset:node.end.offset]
 }
 
+// unwrap_maybe turns "Maybe(X)" into "X" (trimmed), leaving other types as-is.
+unwrap_maybe :: proc(t: string) -> string {
+	if strings.has_prefix(t, "Maybe(") && strings.has_suffix(t, ")") {
+		return strings.trim_space(t[len("Maybe("):len(t) - 1])
+	}
+	return t
+}
+
 collect_struct :: proc(
 	pkg: ^Pkg_Spec,
 	file: ^ast.File,
@@ -127,7 +135,10 @@ collect_struct :: proc(
 	if st.fields != nil {
 		for f in st.fields.list {
 			if f.type == nil {continue}
-			type_text := strings.trim_space(source_of(file, f.type))
+			// Unwrap Maybe(X) → X: the generated `dest.field = <X-typed>`
+			// assignment converts implicitly into the Maybe field, and a NULL
+			// (no case matched) leaves it at its zero value, None.
+			type_text := unwrap_maybe(strings.trim_space(source_of(file, f.type)))
 			for n in f.names {
 				ident, ok := n.derived.(^ast.Ident)
 				if !ok {continue}

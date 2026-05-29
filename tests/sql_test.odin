@@ -19,7 +19,7 @@ import mock "../drivers/mock"
 // not a nil-driver crash. Regression test for issue #7.
 @(test)
 test_close_row_safe_on_no_row :: proc(t: ^testing.T) {
-	m, db := mock.open()
+	m, db := mock.open(t)
 	defer mock.close(m, db)
 
 	// Empty result set — query_row should return Row{err: No_Row, ...}.
@@ -35,7 +35,7 @@ test_close_row_safe_on_no_row :: proc(t: ^testing.T) {
 // close_row on an error Row from a driver failure must also be safe.
 @(test)
 test_close_row_safe_on_driver_error :: proc(t: ^testing.T) {
-	m, db := mock.open()
+	m, db := mock.open(t)
 	defer mock.close(m, db)
 
 	mock.returns_error(
@@ -54,7 +54,7 @@ test_close_row_safe_on_driver_error :: proc(t: ^testing.T) {
 
 @(test)
 test_pool_wait_timeout :: proc(t: ^testing.T) {
-	m, db := mock.open()
+	m, db := mock.open(t)
 	defer mock.close(m, db)
 
 	sql.set_max_open_conns(db, 1)
@@ -89,7 +89,7 @@ sync_barrier :: struct {
 
 @(test)
 test_pool_wait_wakes_on_release :: proc(t: ^testing.T) {
-	m, db := mock.open()
+	m, db := mock.open(t)
 	defer mock.close(m, db)
 
 	sql.set_max_open_conns(db, 1)
@@ -126,7 +126,7 @@ test_pool_wait_wakes_on_release :: proc(t: ^testing.T) {
 
 @(test)
 test_many_columns :: proc(t: ^testing.T) {
-	m, db := mock.open()
+	m, db := mock.open(t)
 	defer mock.close(m, db)
 
 	// 80 columns > the old MAX_SCAN_COLS=64. Should no longer corrupt memory.
@@ -151,4 +151,43 @@ test_many_columns :: proc(t: ^testing.T) {
 	testing.expect(t, sql.next(&rows), "expected one row")
 	cols_out := sql.columns(&rows)
 	testing.expect_value(t, len(cols_out), N)
+}
+
+// --- nullable columns scan into Maybe(T) fields ----------------------------
+
+@(test)
+test_scan_maybe_fields :: proc(t: ^testing.T) {
+	m, db := mock.open(t)
+	defer mock.close(m, db)
+
+	Person :: struct {
+		id:   i64,
+		name: Maybe(string),
+		age:  Maybe(i64),
+	}
+
+	mock.returns_rows(
+		mock.expect_query(m, "SELECT"),
+		{"id", "name", "age"},
+		{{i64(1), "alice", drv.Null{}}}, // age is NULL
+	)
+
+	rows, err := sql.query(db, "SELECT id, name, age FROM people")
+	testing.expect_value(t, err, nil)
+	defer sql.close_rows(&rows)
+
+	testing.expect(t, sql.next(&rows), "expected one row")
+
+	p: Person
+	testing.expect_value(t, sql.scan_struct(&rows, &p), nil)
+	defer if n, ok := p.name.?; ok {delete(n)}
+
+	testing.expect_value(t, p.id, i64(1))
+
+	name, name_ok := p.name.?
+	testing.expect(t, name_ok, "name should be present")
+	testing.expect_value(t, name, "alice")
+
+	_, age_ok := p.age.?
+	testing.expect(t, !age_ok, "age should be None for a NULL column")
 }

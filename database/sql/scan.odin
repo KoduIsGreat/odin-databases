@@ -161,6 +161,20 @@ set_field :: proc(
 ) {
 	ptr := rawptr(uintptr(base) + offset)
 
+	// Nil-able single-variant union (Maybe(T)): set the inner value at the
+	// union's data (offset 0) and write its tag. A NULL leaves the field at
+	// its zero value, which is None.
+	if inner, tag_offset, tag_size, is_maybe := maybe_union(tid); is_maybe {
+		if _, is_null := val.(Null); is_null {
+			return nil, true
+		}
+		if vtype, set_ok := set_field(ptr, 0, inner, val, owned); !set_ok {
+			return vtype, false
+		}
+		write_union_tag(ptr, tag_offset, tag_size, 1)
+		return nil, true
+	}
+
 	#partial switch v in val {
 	case i64:
 		switch tid {
@@ -216,4 +230,40 @@ set_field :: proc(
 	// Leave field unchanged
 	}
 	return nil, true
+}
+
+// maybe_union reports whether tid is a nil-able single-variant union (e.g.
+// Maybe(T)), returning the inner variant's typeid and the union's tag layout.
+// Used by set_field to scan a column value into an optional struct field.
+@(private)
+maybe_union :: proc(
+	tid: typeid,
+) -> (
+	inner: typeid,
+	tag_offset: uintptr,
+	tag_size: int,
+	ok: bool,
+) {
+	ti := runtime.type_info_base(type_info_of(tid))
+	u, is_union := ti.variant.(runtime.Type_Info_Union)
+	if !is_union {return}
+	if len(u.variants) != 1 || u.no_nil {return}
+	return u.variants[0].id, u.tag_offset, u.tag_type.size, true
+}
+
+// write_union_tag writes a union's active-variant tag (1-based for nil-able
+// unions; 0 means nil/None) at ptr + tag_offset, sized per the tag type.
+@(private)
+write_union_tag :: proc(ptr: rawptr, tag_offset: uintptr, tag_size: int, tag: u64) {
+	tagptr := rawptr(uintptr(ptr) + tag_offset)
+	switch tag_size {
+	case 1:
+		(^u8)(tagptr)^ = u8(tag)
+	case 2:
+		(^u16)(tagptr)^ = u16(tag)
+	case 4:
+		(^u32)(tagptr)^ = u32(tag)
+	case 8:
+		(^u64)(tagptr)^ = u64(tag)
+	}
 }

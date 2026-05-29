@@ -60,9 +60,10 @@ returns_result :: proc(e: ^Expectation, last_insert_id: i64 = 0, rows_affected: 
 }
 
 // returns_rows configures a Query/Stmt_Query expectation with the columns
-// and row values to deliver. The slices are deep-copied into the mock's
-// allocator (the same one that frees them in close()) so the caller can
-// pass literals or stack-local data freely.
+// and row values to deliver. Everything is deep-copied into the mock's
+// allocator (the same one that frees it in close()) — including string and
+// []byte payloads — so the caller can pass literals or dynamically-built,
+// stack-local data freely; nothing aliases caller memory after this returns.
 //
 // Panics if any row's value count doesn't match the column count — that
 // is a fixture mistake worth surfacing immediately rather than at row-read
@@ -78,13 +79,13 @@ returns_rows :: proc(e: ^Expectation, columns: []string, rows: [][]drv.Value) ->
 	alloc := e.mock.allocator
 	cols_copy := make([]string, len(columns), alloc)
 	for c, i in columns {
-		cols_copy[i] = c // strings are immutable; sharing is fine
+		cols_copy[i] = strings.clone(c, alloc)
 	}
 	rows_copy := make([][]drv.Value, len(rows), alloc)
 	for row, i in rows {
 		dst := make([]drv.Value, len(row), alloc)
 		for v, j in row {
-			dst[j] = v
+			dst[j] = clone_value(v, alloc)
 		}
 		rows_copy[i] = dst
 	}

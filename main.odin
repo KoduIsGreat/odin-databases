@@ -4,9 +4,11 @@ import "core:fmt"
 import "core:time"
 
 import "database/sql"
+import sb "database/sqlbuilder"
 import "drivers/sqlite"
 
 //+sql:scan
+//+sql:table users
 User :: struct {
 	id:         i64,
 	name:       string,
@@ -81,6 +83,34 @@ main :: proc() {
 				mn,
 				sc,
 			)
+		}
+	}
+
+	// Build a query with the typed sqlbuilder. Column references
+	// (Users.age, Users.name) are the schemagen-generated descriptors, so a
+	// mistyped name won't compile and predicate values are type-checked.
+	fmt.println("\n--- typed query builder ---")
+	{
+		b: sb.Builder
+		sb.init(&b)
+		defer sb.destroy(&b)
+
+		sb.select(&b, Users.id, Users.name, Users.age)
+		sb.from(&b, Users)
+		sb.where_(&b, sb.ge(Users.age, 28))
+		sb.order_by(&b, sb.desc(Users.age))
+
+		q, args := sb.to_query(&b)
+		fmt.printfln("  sql: %s", q)
+
+		rows, qerr := sql.query(db, q, ..args)
+		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
+		defer sql.close_rows(&rows)
+
+		for sql.next(&rows) {
+			user: User
+			scan(&rows, &user)
+			fmt.printfln("  id=%v  name=%v  age=%v", user.id, user.name, user.age)
 		}
 	}
 

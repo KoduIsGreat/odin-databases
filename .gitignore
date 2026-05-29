@@ -6,3 +6,4 @@ test_db
 *.exe
 sqlite/example/example
 sqlite/example/main
+*.gen.odin
