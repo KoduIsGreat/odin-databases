@@ -7,7 +7,7 @@ import "core:reflect"
 import "core:slice"
 import "core:time"
 
-import drv "../../database/sql/driver"
+import drv "database:sql/driver"
 
 // returns_structs configures a Query/Stmt_Query expectation from typed row
 // structs: each field name becomes a column name and each field value a column

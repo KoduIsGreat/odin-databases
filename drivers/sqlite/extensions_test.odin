@@ -2,7 +2,7 @@ package sqlite
 
 import "core:testing"
 
-import sql "../../database/sql"
+import sql "database:sql"
 
 // Verifies the loadable-extension API is wired through to SQLite's C loader.
 // (We can't load a real extension here, so we assert the enable call succeeds

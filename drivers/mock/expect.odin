@@ -3,7 +3,7 @@ package sqlmock
 import "core:fmt"
 import "core:strings"
 
-import drv "../../database/sql/driver"
+import drv "database:sql/driver"
 
 // --- Expectation builders ----------------------------------------------------
 //

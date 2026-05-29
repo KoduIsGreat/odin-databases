@@ -6,6 +6,10 @@
 
 set shell := ["bash", "-cu"]
 
+# The repo is consumed as the `database` collection: import "database:sql", etc.
+# Every odin command registers it (rooted at the repo, so no ../.. imports).
+coll := "-collection:database=."
+
 # Default: list available recipes.
 default:
     @just --list
@@ -15,73 +19,74 @@ gen dir=".": (scan dir) (schema dir)
 
 # Run the demo (regens generated code first).
 run: gen
-    odin run .
+    odin run . {{coll}}
 
 # Build the demo binary (regens generated code first).
 build: gen
-    odin build . -out:bin/odin-databases
+    odin build . {{coll}} -out:bin/odin-databases
 
 # Type-check without building.
 check:
-    odin check .
+    odin check . {{coll}}
 
 # Type-check every importable package in the repo. Library packages (and the
 # test-only `testing` example) get -no-entry-point so the check doesn't fail
 # looking for `main`.
 check-all:
-    odin check .
-    odin check database/sql -no-entry-point
-    odin check database/sqlbuilder -no-entry-point
-    odin check examples/quickstart
-    odin check examples/query_builder
-    odin check examples/introspection
-    odin check examples/testing -no-entry-point
-    odin check drivers/sqlite -no-entry-point
-    odin check drivers/mock -no-entry-point
-    odin check tools/scangen
-    odin check tools/schemagen
-    odin check tests -no-entry-point
+    odin check . {{coll}}
+    odin check sql -no-entry-point {{coll}}
+    odin check sql/driver -no-entry-point {{coll}}
+    odin check sqlbuilder -no-entry-point {{coll}}
+    odin check examples/quickstart {{coll}}
+    odin check examples/query_builder {{coll}}
+    odin check examples/introspection {{coll}}
+    odin check examples/testing -no-entry-point {{coll}}
+    odin check drivers/sqlite -no-entry-point {{coll}}
+    odin check drivers/mock -no-entry-point {{coll}}
+    odin check tools/scangen {{coll}}
+    odin check tools/schemagen {{coll}}
+    odin check tests -no-entry-point {{coll}}
 
 # Run all tests.
 test:
-    odin test drivers/mock
-    odin test drivers/sqlite
-    odin test database/sqlbuilder
-    odin test tests
-    odin test examples/testing
+    odin test drivers/mock {{coll}}
+    odin test drivers/sqlite {{coll}}
+    odin test sqlbuilder {{coll}}
+    odin test tests {{coll}}
+    odin test examples/testing {{coll}}
 
 # Run tests in a specific package.
 test-pkg pkg:
-    odin test {{pkg}}
+    odin test {{pkg}} {{coll}}
 
 # --- Examples -----------------------------------------------------------------
 
 # Run an example by name, e.g. `just run-example quickstart`.
 run-example name:
-    odin run examples/{{name}}
+    odin run examples/{{name}} {{coll}}
 
 # Run an example's tests by name, e.g. `just test-example testing`.
 test-example name:
-    odin test examples/{{name}}
+    odin test examples/{{name}} {{coll}}
 
 # --- Code generation ----------------------------------------------------------
 
 # Run scangen on a package directory (default: repo root).
 # Generates `<dir>/scan.gen.odin` for any struct tagged `//+sql:scan`.
 scan dir=".":
-    odin run tools/scangen -- {{dir}}
+    odin run tools/scangen {{coll}} -- {{dir}}
 
 # Run schemagen on a package directory (default: repo root).
 # Generates `<dir>/schema.gen.odin` typed descriptors for any struct tagged
 # `//+sql:table <name>`.
 schema dir=".":
-    odin run tools/schemagen -- {{dir}}
+    odin run tools/schemagen {{coll}} -- {{dir}}
 
 # Run schemagen's DB front-end: introspect <db> and write row structs +
 # typed descriptors to <dir>/schema.gen.odin (the database is the source of
 # truth — structs are emitted too).
 schema-db db dir:
-    odin run tools/schemagen -- -db={{db}} {{dir}}
+    odin run tools/schemagen {{coll}} -- -db={{db}} {{dir}}
 
 # Regenerate the query_builder example (struct mode: scangen + schemagen).
 gen-query-builder: (gen "examples/query_builder")
@@ -94,8 +99,8 @@ gen-introspection:
     set -euo pipefail
     db="$(mktemp -u -t schemagen.XXXXXX.db)"
     sqlite3 "$db" < examples/introspection/schema.sql
-    odin run tools/schemagen -- -db="$db" examples/introspection
-    odin run tools/scangen -- examples/introspection
+    odin run tools/schemagen {{coll}} -- -db="$db" examples/introspection
+    odin run tools/scangen {{coll}} -- examples/introspection
     rm -f "$db"
 
 # Regenerate every generated file in the repo.

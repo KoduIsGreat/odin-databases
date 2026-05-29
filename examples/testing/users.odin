@@ -1,13 +1,13 @@
 // testing — how to test database code without a real database.
 //
-// The mock driver (drivers/mock) lets a test set up expected queries and the
+// The mock driver (database:drivers/mock) lets a test set up expected queries and the
 // rows/errors they return, so query logic can be exercised in isolation. This
 // file holds the code under test; users_test.odin drives it through the mock.
 //
 // Run: just test-example testing   (or: odin test examples/testing)
 package testing_example
 
-import sql "../../database/sql"
+import sql "database:sql"
 
 User :: struct {
 	id:   i64,

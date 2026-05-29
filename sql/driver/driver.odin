@@ -1,11 +1,11 @@
-// Package driver defines the contract between the user-facing `database/sql`
+// Package driver defines the contract between the user-facing `database:sql`
 // package and concrete database drivers. Drivers implement the `Driver`
 // vtable in this package; users never import this package directly — they
-// use `database/sql` and pass `&drivername.driver` to `sql.open`.
+// use `database:sql` and pass `&drivername.driver` to `sql.open`.
 //
 // This split exists so drivers depend only on the small, stable contract
 // surface, not on the entire user-facing API. New features can be added
-// to `database/sql` without touching drivers, as long as the contract here
+// to `database:sql` without touching drivers, as long as the contract here
 // stays stable.
 package driver
 

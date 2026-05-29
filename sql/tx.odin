@@ -14,7 +14,7 @@ import "core:time"
 //
 // Error policy on commit/rollback: if the driver returns an error, the
 // underlying connection may be in an inconsistent state and is *not*
-// returned to the pool — it is closed instead (Go's database/sql does
+// returned to the pool — it is closed instead (Go's database:sql does
 // the same). Callers should treat the Tx as terminal.
 Tx :: struct {
 	db:          ^DB, // non-nil = owns the conn, release on commit/rollback

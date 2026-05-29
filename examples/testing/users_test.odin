@@ -2,8 +2,8 @@ package testing_example
 
 import "core:testing"
 
-import sql "../../database/sql"
-import mock "../../drivers/mock"
+import sql "database:sql"
+import mock "database:drivers/mock"
 
 @(test)
 test_find_users_over :: proc(t: ^testing.T) {

@@ -193,12 +193,7 @@ emit :: proc(pkg: ^Pkg_Spec) -> string {
 
 	if pkg.uses_strings {w(&b, "import \"core:strings\"\n")}
 	if pkg.uses_time {w(&b, "import \"core:time\"\n")}
-	// Compute relative import path from this generated file to database/sql.
-	// We assume the tool is run from repo root; the user controls layout.
-	// For now, hardcode the canonical project import path:
-	w(&b, "import sql \"")
-	w(&b, sql_import_path(pkg.dir))
-	w(&b, "\"\n\n")
+	w(&b, "import sql \"database:sql\"\n\n")
 
 	for i in 0 ..< len(pkg.structs) {
 		emit_struct_proc(&b, &pkg.structs[i])
@@ -288,32 +283,6 @@ emit_field_case :: proc(b: ^strings.Builder, f: ^Field_Spec) {
 	case .Unsupported:
 		ws(b, "\t\t\t// scangen: unsupported field type \"", f.odin_type, "\" for ", f.name, "; skipping\n")
 	}
-}
-
-// Compute the import path string for `database/sql` from the perspective
-// of a generated file inside `dir`. For MVP we just walk up to the repo
-// root by searching for the `database/sql` directory above `dir`.
-sql_import_path :: proc(dir: string) -> string {
-	abs_dir, _ := filepath.abs(dir)
-	cur := abs_dir
-	for _ in 0 ..< 16 {
-		candidate, jerr := filepath.join({cur, "database", "sql"})
-		if jerr == .None {
-			info, serr := os.stat(candidate, context.allocator)
-			if serr == nil && info.type == .Directory {
-				rel, rerr := filepath.rel(abs_dir, candidate)
-				if rerr == .None {
-					normalized, _ := strings.replace_all(rel, "\\", "/")
-					return normalized
-				}
-			}
-		}
-		parent := filepath.dir(cur)
-		if parent == cur {break}
-		cur = parent
-	}
-	// Fallback — caller will get a compile error and can fix manually.
-	return "database/sql"
 }
 
 // --- Driver ---

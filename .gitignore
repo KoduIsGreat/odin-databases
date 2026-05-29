@@ -1,9 +1,22 @@
+# Build output
 main
-test_db
-
-# Odin build artifacts
+bin/
 *.bin
 *.exe
-sqlite/example/example
-sqlite/example/main
-*.gen.odin
+
+# Binding/example build artifacts
+bindings/sqlite/example/example
+bindings/sqlite/example/main
+
+# Local SQLite databases
+test_db
+*.db
+
+# macOS
+.DS_Store
+
+# NOTE: generated *.gen.odin files are committed (see README) so the demo and
+# examples build on a fresh clone; CI verifies they stay in sync with the
+# generators. They are intentionally NOT ignored.
+quickstart
+query_builder

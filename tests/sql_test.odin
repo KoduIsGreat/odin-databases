@@ -1,17 +1,17 @@
-// Integration tests for database/sql via the mock driver.
+// Integration tests for database:sql via the mock driver.
 //
-// Lives in its own package so it can import both database/sql and
-// drivers/mock without creating a cycle (the mock already imports
-// database/sql).
+// Lives in its own package so it can import both database:sql and
+// database:drivers/mock without creating a cycle (the mock already imports
+// database:sql).
 package sql_tests
 
 import "core:testing"
 import "core:thread"
 import "core:time"
 
-import sql "../database/sql"
-import drv "../database/sql/driver"
-import mock "../drivers/mock"
+import sql "database:sql"
+import drv "database:sql/driver"
+import mock "database:drivers/mock"
 
 // --- error-row safety -------------------------------------------------------
 

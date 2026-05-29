@@ -21,9 +21,9 @@ package sqlite
 
 import "core:strings"
 
-import sql "../../database/sql"
-import drv "../../database/sql/driver"
-import sql3 "../../bindings/sqlite/sqlite"
+import sql "database:sql"
+import drv "database:sql/driver"
+import sql3 "database:bindings/sqlite/sqlite"
 
 // enable_load_extension toggles SQLite's C-API extension loader for the
 // connection. Call with `true` before load_extension.

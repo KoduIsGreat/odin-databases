@@ -15,9 +15,9 @@ package query_builder
 
 import "core:fmt"
 
-import sql "../../database/sql"
-import sb "../../database/sqlbuilder"
-import sqlite "../../drivers/sqlite"
+import sql "database:sql"
+import sb "database:sqlbuilder"
+import sqlite "database:drivers/sqlite"
 
 //+sql:scan
 //+sql:table users

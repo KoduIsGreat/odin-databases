@@ -3,9 +3,9 @@ package main
 import "core:fmt"
 import "core:time"
 
-import "database/sql"
-import sb "database/sqlbuilder"
-import "drivers/sqlite"
+import "database:sql"
+import sb "database:sqlbuilder"
+import "database:drivers/sqlite"
 
 //+sql:scan
 //+sql:table users

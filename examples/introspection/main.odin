@@ -11,9 +11,9 @@ package introspection
 
 import "core:fmt"
 
-import sql "../../database/sql"
-import sb "../../database/sqlbuilder"
-import sqlite "../../drivers/sqlite"
+import sql "database:sql"
+import sb "database:sqlbuilder"
+import sqlite "database:drivers/sqlite"
 
 main :: proc() {
 	db, err := sql.open(&sqlite.driver, ":memory:")

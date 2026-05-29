@@ -1,5 +1,5 @@
-// drivers/mock — an expectation-based mock driver for testing code that uses
-// `database/sql`. Modeled after Go's go-sqlmock.
+// database:drivers/mock — an expectation-based mock driver for testing code that uses
+// `database:sql`. Modeled after Go's go-sqlmock.
 //
 // Usage (pass `t` so close() auto-asserts all expectations were consumed):
 //   mock, db := sqlmock.open(t)
@@ -25,8 +25,8 @@ import "core:mem"
 import "core:strings"
 import "core:testing"
 
-import sql "../../database/sql"
-import drv "../../database/sql/driver"
+import sql "database:sql"
+import drv "database:sql/driver"
 
 // --- Public types ------------------------------------------------------------
 

@@ -50,8 +50,8 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 
-import sql "../../database/sql"
-import sqlite "../../drivers/sqlite"
+import sql "database:sql"
+import sqlite "database:drivers/sqlite"
 
 // --- Internal schema model (the front-end ⇄ emit seam) ---
 
@@ -422,7 +422,7 @@ emit :: proc(schema: ^Schema) -> string {
 	ws(&b, "package ", schema.pkg_name, "\n\n")
 
 	if schema.uses_time {ws(&b, "import \"core:time\"\n")}
-	ws(&b, "import sb \"", sqlbuilder_import_path(schema.dir), "\"\n\n")
+	ws(&b, "import sb \"database:sqlbuilder\"\n\n")
 
 	if schema.emit_structs {
 		for i in 0 ..< len(schema.tables) {
@@ -469,30 +469,6 @@ emit_table :: proc(b: ^strings.Builder, tbl: ^Table_Spec) {
 		ws(b, "}},\n")
 	}
 	ws(b, "}\n")
-}
-
-// sqlbuilder_import_path computes the import path for `database/sqlbuilder`
-// from the perspective of a generated file inside `dir`.
-sqlbuilder_import_path :: proc(dir: string) -> string {
-	abs_dir, _ := filepath.abs(dir)
-	cur := abs_dir
-	for _ in 0 ..< 16 {
-		candidate, jerr := filepath.join({cur, "database", "sqlbuilder"})
-		if jerr == .None {
-			info, serr := os.stat(candidate, context.allocator)
-			if serr == nil && info.type == .Directory {
-				rel, rerr := filepath.rel(abs_dir, candidate)
-				if rerr == .None {
-					normalized, _ := strings.replace_all(rel, "\\", "/")
-					return normalized
-				}
-			}
-		}
-		parent := filepath.dir(cur)
-		if parent == cur {break}
-		cur = parent
-	}
-	return "database/sqlbuilder"
 }
 
 // --- Driver ---

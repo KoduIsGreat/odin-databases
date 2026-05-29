@@ -1,4 +1,4 @@
-// quickstart — the core database/sql API with the SQLite driver.
+// quickstart — the core database:sql API with the SQLite driver.
 //
 // Covers: opening a DB with a driver, exec, transactions + prepared
 // statements, query_row, and scanning rows into structs (reflective and
@@ -11,8 +11,8 @@ import "core:fmt"
 import vmem "core:mem/virtual"
 import "core:time"
 
-import sql "../../database/sql"
-import sqlite "../../drivers/sqlite"
+import sql "database:sql"
+import sqlite "database:drivers/sqlite"
 
 User :: struct {
 	id:         i64,

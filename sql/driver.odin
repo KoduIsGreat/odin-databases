@@ -2,7 +2,7 @@ package sql
 
 // Re-exports of the driver-contract types so user code can continue using
 // `sql.Driver`, `sql.Conn_Handle`, etc. The actual definitions live in
-// `database/sql/driver` so concrete drivers can depend on a small,
+// `database:sql/driver` so concrete drivers can depend on a small,
 // stable contract package without pulling in the user-facing API.
 
 import drv "./driver"

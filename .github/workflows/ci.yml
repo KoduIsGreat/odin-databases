@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pin to the Odin release the project targets; bump as needed.
+      - name: Set up Odin
+        uses: laytan/setup-odin@v2
+        with:
+          release: dev-2026-04
+
+      - name: Set up just
+        uses: extractions/setup-just@v2
+
+      - name: Install sqlite3 (for DB-mode codegen)
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      # Only darwin_arm64 ships prebuilt; build the lib for this runner.
+      - name: Build SQLite static lib
+        run: bash bindings/sqlite/build_libs.sh
+
+      # Regenerate from source and fail if the committed *.gen.odin files are
+      # stale (i.e. someone changed a struct/schema without running the
+      # generators). This also exercises scangen + schemagen.
+      - name: Verify generated code is up to date
+        run: |
+          just gen-all
+          git diff --exit-code -- '*.gen.odin' \
+            || { echo "::error::Generated files are stale — run 'just gen-all' and commit."; exit 1; }
+
+      - name: Type-check all packages
+        run: just check-all
+
+      - name: Run tests
+        run: just test

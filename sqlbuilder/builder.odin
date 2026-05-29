@@ -52,7 +52,7 @@ import "core:fmt"
 import "core:strings"
 import "core:time"
 
-import sql "../../database/sql"
+import sql "database:sql"
 
 Value :: sql.Value
 

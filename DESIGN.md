@@ -1,46 +1,60 @@
 # odin-databases — Design Notes
 
-A database access toolkit for Odin: a driver-agnostic `database/sql` core, a
-typed SQL builder, and code generators that turn your schema into typed query
-descriptors and row scanners.
+A database access toolkit for Odin: a driver-agnostic `sql` core, a typed SQL
+builder, and code generators that turn your schema into typed query descriptors
+and row scanners.
+
+## Imports — the `database` collection
+
+The repo is an Odin *collection* named `database`, rooted at the repo. Build
+with `-collection:database=.` (wired into the justfile and `ols.json`), and
+everything imports with rooted paths — no `../..`:
+
+```odin
+import sql    "database:sql"
+import drv    "database:sql/driver"
+import sb     "database:sqlbuilder"
+import sqlite "database:drivers/sqlite"
+import mock   "database:drivers/mock"
+```
+
+Consumers depend on it the same way: `-collection:database=/path/to/this/repo`,
+then `import "database:sql"`.
 
 ## Architecture
 
 ```
-database/
-  sql/
-    driver.odin     — re-export of driver-contract types
-    types.odin      — re-export of Value, Error, Result, Column, Tx_Options
-    db.odin         — DB (pool + API), open/close, overload sets, pool internals
-    conn.odin       — Conn, checkout, checkin
-    rows.odin       — Rows, next, columns, close_rows, codegen accessors
-    query_row.odin  — Row, query_row, close_row (error-safe)
-    stmt.odin       — Stmt, prepare, stmt_exec, stmt_query, close_stmt
-    tx.odin         — Tx, begin, commit, rollback (closes conn on error)
-    scan.odin       — Generic struct + positional scanning via runtime type info
-    driver/
-      driver.odin   — Driver vtable + opaque handles
-      types.odin    — Value / Error union + variants
-  sqlbuilder/
-    builder.odin    — typed SQL builder (descriptors, predicates) + raw escape hatch
+sql/                  — package sql (DB, Conn, Rows, Row, Stmt, Tx, scan)
+  db.odin             — DB (pool + API), open/close, overload sets, pool internals
+  conn.odin           — Conn, checkout, checkin
+  rows.odin           — Rows, next, columns, close_rows, codegen accessors
+  query_row.odin      — Row, query_row, close_row (error-safe)
+  stmt.odin           — Stmt, prepare, stmt_exec, stmt_query, close_stmt
+  tx.odin             — Tx, begin, commit, rollback (closes conn on error)
+  scan.odin           — Generic struct + positional scanning via runtime type info
+  types.odin/driver.odin — re-exports of the driver-contract types
+  driver/             — package driver: Driver vtable + opaque handles + Value/Error
+sqlbuilder/
+  builder.odin        — typed SQL builder (descriptors, predicates) + raw escape hatch
 drivers/
-  sqlite/driver.odin — sql.Driver implementation for SQLite
-  mock/              — expectation-based mock driver for tests
+  sqlite/             — sql.Driver implementation for SQLite (+ loadable extensions)
+  mock/               — expectation-based mock driver for tests
 tools/
-  scangen/           — generates concrete row scanners from //+sql:scan structs
-  schemagen/         — generates typed column descriptors (+ structs) from
-                       //+sql:table structs or a live database
-examples/            — runnable, focused examples (see examples/README.md)
+  scangen/            — generates concrete row scanners from //+sql:scan structs
+  schemagen/          — generates typed column descriptors (+ structs) from
+                        //+sql:table structs or a live database
+examples/             — runnable, focused examples (see examples/README.md)
+bindings/sqlite/      — generated Odin bindings + static lib for SQLite
 ```
 
 The project is three cooperating layers:
 
-1. **`database/sql`** — the user-facing API (`DB`, `Conn`, `Rows`, `Row`,
-   `Stmt`, `Tx`, `scan`) plus **`database/sql/driver`**, the vtable struct
-   (`Driver`) and shared types (`Value`, `Error`, `Result`, `Column`,
-   `Tx_Options`) that driver authors implement.
-2. **`database/sqlbuilder`** — a typed SQL builder driven by generated column
-   descriptors, with a raw string escape hatch.
+1. **`sql`** (`database:sql`) — the user-facing API (`DB`, `Conn`, `Rows`,
+   `Row`, `Stmt`, `Tx`, `scan`) plus **`sql/driver`** (`database:sql/driver`),
+   the vtable struct (`Driver`) and shared types (`Value`, `Error`, `Result`,
+   `Column`, `Tx_Options`) that driver authors implement.
+2. **`sqlbuilder`** (`database:sqlbuilder`) — a typed SQL builder driven by
+   generated column descriptors, with a raw string escape hatch.
 3. **`tools/`** — the code generators (`scangen`, `schemagen`) that connect a
    schema (your structs or a live DB) to layers 1 and 2.
 
@@ -48,7 +62,7 @@ Drivers fill in a `Driver` struct of procedure pointers. The sql package only
 sees opaque handles (`Conn_Handle`, `Stmt_Handle`, etc., all `distinct rawptr`).
 Driver authors cast these to/from their own concrete types internally.
 
-## Key Decisions — database/sql
+## Key Decisions — sql
 
 ### No driver registry — pass the driver directly
 
