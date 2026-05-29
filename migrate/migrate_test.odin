@@ -5,6 +5,7 @@ import "core:path/filepath"
 import "core:testing"
 
 import sql "database:sql"
+import mock "database:drivers/mock"
 import sqlite "database:drivers/sqlite"
 
 // A small fixed set of in-code migrations used across several tests. Backed by
@@ -244,6 +245,53 @@ test_from_dir :: proc(t: ^testing.T) {
 	testing.expect_value(t, aerr, nil)
 	testing.expect_value(t, applied, 2)
 	testing.expect(t, table_exists(db, "users"), "users table should exist")
+}
+
+// Against a driver that supports advisory locking, up() must take the lock
+// once around the run and release it once. We drive it with the mock so we can
+// assert the lock/unlock counts and the exact statement sequence.
+@(test)
+test_up_takes_advisory_lock :: proc(t: ^testing.T) {
+	m, db := mock.open(t)
+	defer mock.close(m, db)
+
+	// The statements up() issues for one pending migration, in order:
+	mock.expect_exec(m, "CREATE TABLE IF NOT EXISTS") // ensure_table
+	mock.returns_rows(mock.expect_query(m, "SELECT version"), {"version"}, {}) // applied: none
+	mock.expect_begin(m)
+	mock.expect_exec(m, "CREATE TABLE widgets") // the migration body
+	mock.expect_exec(m, "INSERT INTO schema_migrations")
+	mock.expect_commit(m)
+
+	ms := []Migration {
+		{version = 20260101000000, name = "widgets", up = "CREATE TABLE widgets (id INTEGER)"},
+	}
+	applied, err := up(db, ms)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, applied, 1)
+	testing.expect_value(t, m.lock_count, 1)
+	testing.expect_value(t, m.unlock_count, 1)
+}
+
+@(test)
+test_sqlite_has_no_advisory_lock :: proc(t: ^testing.T) {
+	db, err := sql.open(&sqlite.driver, ":memory:")
+	testing.expect_value(t, err, nil)
+	defer sql.close(db)
+
+	conn, cerr := sql.checkout(db)
+	testing.expect_value(t, cerr, nil)
+	defer sql.checkin(&conn)
+
+	testing.expect(t, !sql.supports_advisory_lock(&conn), "sqlite is single-writer; no advisory lock")
+	// The no-op lock/unlock are still safe to call.
+	testing.expect_value(t, sql.advisory_lock(&conn, 1), nil)
+	testing.expect_value(t, sql.advisory_unlock(&conn, 1), nil)
+
+	// And up() still works (the runner skips locking when unsupported).
+	applied, merr := up(db, fixture())
+	testing.expect_value(t, merr, nil)
+	testing.expect_value(t, applied, 2)
 }
 
 @(private = "file")

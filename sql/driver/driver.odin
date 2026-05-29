@@ -53,6 +53,20 @@ Driver :: struct {
 	tx_commit:    proc(tx: Tx_Handle) -> Error,
 	tx_rollback:  proc(tx: Tx_Handle) -> Error,
 
+	// Advisory locking (OPTIONAL — may be nil).
+	//
+	// A session-scoped, application-defined lock keyed by an arbitrary integer,
+	// used to coordinate schema migrations across processes (so concurrent
+	// app instances don't race to apply the same migration). lock blocks until
+	// the lock is granted on this connection; unlock releases it. The lock is
+	// tied to the connection, so both calls must target the same Conn_Handle.
+	//
+	// Drivers that can't (or needn't) provide this leave both nil — the migrate
+	// runner then proceeds without locking. SQLite leaves them nil (it is
+	// single-writer); PostgreSQL implements them via pg_advisory_lock.
+	lock:         proc(conn: Conn_Handle, key: i64) -> Error,
+	unlock:       proc(conn: Conn_Handle, key: i64) -> Error,
+
 	// Driver-owned opaque state (e.g. library handle, shared config).
 	// Passed to open() so drivers can access shared resources.
 	data:         rawptr,

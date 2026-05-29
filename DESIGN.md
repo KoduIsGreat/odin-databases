@@ -47,6 +47,8 @@ tools/
   scangen/            — generates concrete row scanners from //+sql:scan structs
   schemagen/          — generates typed column descriptors (+ structs) from
                         //+sql:table structs or a live database
+  migragen/           — embeds a directory of .sql migrations into a generated
+                        []migrate.Migration (an embedded front-end for migrate)
 examples/             — runnable, focused examples (see examples/README.md)
 bindings/sqlite/      — generated Odin bindings + static lib for SQLite
 ```
@@ -284,6 +286,9 @@ row, exactly like the SQLite driver does with `sqlite3_step`.
   (so multi-statement DDL works); parameterized ones use the extended protocol
   (Parse/Bind/Describe/Execute/Sync). Either way the connection is always
   drained to ReadyForQuery before reuse, so pooled connections stay clean.
+- **Advisory locks**: implements the driver's optional `lock`/`unlock` via
+  `pg_advisory_lock`/`pg_advisory_unlock` (session-scoped), which the `migrate`
+  runner uses to serialize migrations across processes.
 
 ## Key Decisions — sqlbuilder
 
@@ -426,10 +431,19 @@ reuses the same decoupling idea as `schemagen`: the runner consumes a
 
 `up`/`down`/`to`/`status` all take `(db: ^sql.DB, migrations: []Migration)`. A
 `Migration` is just `{version, name, up, down}` where `up`/`down` are SQL
-strings. `from_dir` is one front-end that loads them from `.sql` files; building
-the slice by hand (or, later, embedding it via codegen) needs no runner changes.
-This keeps the `sql` core untouched and makes the runner trivially testable
-against the mock or an in-memory SQLite database.
+strings. There are two front-ends that produce the slice, neither of which the
+runner knows about:
+
+- **`from_dir`** loads `.sql` files at runtime.
+- **`migragen`** (`tools/migragen`) embeds the same `.sql` files into a generated
+  `migrations.gen.odin` at build time, so the binary is self-contained. It is
+  literally `from_dir` plus an Odin emitter, and slots into the existing codegen
+  story — the generated file is committed and CI fails on drift, exactly like
+  scangen/schemagen.
+
+Building the slice by hand works too. This keeps the `sql` core untouched and
+makes the runner trivially testable against the mock or an in-memory SQLite
+database.
 
 ### State: one row per applied version
 
@@ -464,10 +478,26 @@ duplicate version, missing up, irreversible, unknown version) are a
 `Migrate_Error`. The driver-contract `Error` union is closed and can't be
 extended, so wrapping — rather than adding variants — keeps that contract intact.
 
-### Concurrency
+### Concurrency: advisory lock when the driver supports it
 
-The runner takes no distributed lock; run migrations from a single process at
-startup (or behind your own lock). Within a process, operations are serial.
+`up`/`down`/`to` run on a single checked-out `Conn` for the whole operation, and
+— when the driver implements the optional `lock`/`unlock` contract — take a
+session advisory lock (keyed by `LOCK_KEY`) around the run. So if several app
+instances boot and call `up` at once, the first acquires the lock and migrates
+while the rest block, then wake to find everything applied and no-op. Without
+this they would race and the losers would fail on the duplicate `version` insert
+(or, worse, double-run a non-idempotent migration).
+
+The lock is a property of the *driver*, not the runner: the migrate package only
+calls `sql.advisory_lock`/`unlock`, which dispatch to the driver's procs.
+PostgreSQL implements them via `pg_advisory_lock` (session-scoped — hence the
+single-`Conn` requirement); SQLite leaves them nil (it is single-writer, so the
+runner skips locking and relies on SQLite's own write serialization). The
+read-only `status`/`current_version` take no lock.
+
+This is why the `Driver` vtable gained two *optional* (nil-able) procs rather
+than a required pair: adding them is backward compatible (omitted fields
+zero-init to nil), and `supports_advisory_lock` is just a nil check.
 
 ## Open Questions
 
@@ -487,12 +517,9 @@ startup (or behind your own lock). Within a process, operations are serial.
   system.
 - **Irregular pluralization in schemagen**: the singularizer is heuristic; a
   per-table name override could be added if needed.
-- **Migration concurrency lock**: the migrate runner takes no distributed lock.
-  A PostgreSQL advisory lock (and a SQLite no-op, since it is single-writer)
-  would make it safe to run from multiple instances at once.
-- **Embedded migration codegen**: `from_dir` reads `.sql` at runtime. A
-  `migragen`-style front-end emitting an embedded `[]Migration` would give a
-  single self-contained binary and a CI drift check, matching scangen/schemagen.
 - **Out-of-order migrations**: `up` applies any unrecorded version in ascending
   order, including one whose timestamp precedes an already-applied migration. A
   strict mode could reject such gaps.
+- **Migration lock key collisions**: the advisory lock uses a single fixed
+  `LOCK_KEY`. An app already using that key for its own advisory locks would
+  contend; a configurable key could be exposed if needed.

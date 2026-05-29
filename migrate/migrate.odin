@@ -41,6 +41,13 @@ import sql "database:sql"
 // history rather than a single "current version" marker.
 MIGRATIONS_TABLE :: "schema_migrations"
 
+// LOCK_KEY is the advisory-lock key the runner uses (an arbitrary fixed i64,
+// the ASCII bytes of "odin_mig"). When the driver supports advisory locking
+// (e.g. PostgreSQL), up/down/to take this lock for the duration of the run so
+// concurrent processes serialize their migrations instead of racing.
+@(private)
+LOCK_KEY :: i64(0x6F64696E5F6D6967)
+
 // Migration is a single, versioned schema change.
 //
 // `up` is the SQL applied to move the schema forward; `down` reverts it. Both
@@ -85,15 +92,22 @@ Migrate_Error :: struct {
 
 // up applies every migration not yet recorded, in ascending version order, and
 // returns how many were applied. It is idempotent: already-applied versions are
-// skipped, so it is safe to call on every startup.
+// skipped, so it is safe to call on every startup. When the driver supports
+// advisory locking, the run is serialized across processes (see LOCK_KEY).
 up :: proc(db: ^sql.DB, migrations: []Migration) -> (applied: int, err: Error) {
-	ensure_table(db) or_return
-	sorted := validated(migrations) or_return
-	done := applied_versions(db, context.temp_allocator) or_return
+	sorted := validated(migrations) or_return // cheap, lock-free validation first
+
+	conn := sql.checkout(db) or_return
+	defer sql.checkin(&conn)
+	locked := acquire_lock(&conn) or_return
+	defer if locked {sql.advisory_unlock(&conn, LOCK_KEY)}
+
+	ensure_table(&conn) or_return
+	done := applied_versions(&conn, context.temp_allocator) or_return
 
 	for m in sorted {
 		if slice.contains(done, m.version) {continue}
-		apply_one(db, m) or_return
+		apply_one(&conn, m) or_return
 		applied += 1
 	}
 	return applied, nil
@@ -103,14 +117,19 @@ up :: proc(db: ^sql.DB, migrations: []Migration) -> (applied: int, err: Error) {
 // applied version). It is a no-op if nothing has been applied. The matching
 // migration must be present in `migrations` and have a non-empty `down`.
 down :: proc(db: ^sql.DB, migrations: []Migration) -> Error {
-	ensure_table(db) or_return
-	done := applied_versions(db, context.temp_allocator) or_return
+	conn := sql.checkout(db) or_return
+	defer sql.checkin(&conn)
+	locked := acquire_lock(&conn) or_return
+	defer if locked {sql.advisory_unlock(&conn, LOCK_KEY)}
+
+	ensure_table(&conn) or_return
+	done := applied_versions(&conn, context.temp_allocator) or_return
 	if len(done) == 0 {return nil}
 
 	last := done[len(done) - 1] // applied_versions returns ascending order
 	for m in migrations {
 		if m.version == last {
-			return revert_one(db, m)
+			return revert_one(&conn, m)
 		}
 	}
 	return Migrate_Error{kind = .Unknown_Version, version = last}
@@ -121,7 +140,6 @@ down :: proc(db: ^sql.DB, migrations: []Migration) -> Error {
 // target = 0 to roll everything back. `target` must be 0 or one of the given
 // migration versions.
 to :: proc(db: ^sql.DB, migrations: []Migration, target: i64) -> Error {
-	ensure_table(db) or_return
 	sorted := validated(migrations) or_return
 
 	if target != 0 {
@@ -132,28 +150,37 @@ to :: proc(db: ^sql.DB, migrations: []Migration, target: i64) -> Error {
 		if !known {return Migrate_Error{kind = .Unknown_Version, version = target}}
 	}
 
-	done := applied_versions(db, context.temp_allocator) or_return
+	conn := sql.checkout(db) or_return
+	defer sql.checkin(&conn)
+	locked := acquire_lock(&conn) or_return
+	defer if locked {sql.advisory_unlock(&conn, LOCK_KEY)}
+
+	ensure_table(&conn) or_return
+	done := applied_versions(&conn, context.temp_allocator) or_return
 
 	// Roll back everything above the target, newest first.
 	#reverse for m in sorted {
 		if m.version > target && slice.contains(done, m.version) {
-			revert_one(db, m) or_return
+			revert_one(&conn, m) or_return
 		}
 	}
 	// Apply everything up to and including the target, oldest first.
 	for m in sorted {
 		if m.version <= target && !slice.contains(done, m.version) {
-			apply_one(db, m) or_return
+			apply_one(&conn, m) or_return
 		}
 	}
 	return nil
 }
 
 // current_version returns the highest applied migration version, or 0 if none
-// have been applied. It creates the bookkeeping table if necessary.
+// have been applied. It creates the bookkeeping table if necessary. (Read-only;
+// no advisory lock is taken.)
 current_version :: proc(db: ^sql.DB) -> (version: i64, err: Error) {
-	ensure_table(db) or_return
-	row := sql.query_row(db, "SELECT COALESCE(MAX(version), 0) FROM " + MIGRATIONS_TABLE)
+	conn := sql.checkout(db) or_return
+	defer sql.checkin(&conn)
+	ensure_table(&conn) or_return
+	row := sql.query_row(&conn, "SELECT COALESCE(MAX(version), 0) FROM " + MIGRATIONS_TABLE)
 	defer sql.close_row(&row)
 	v: i64
 	if e := sql.scan(&row, &v); e != nil {return 0, e}
@@ -163,7 +190,7 @@ current_version :: proc(db: ^sql.DB) -> (version: i64, err: Error) {
 // status returns one Status per migration (in ascending version order),
 // reporting whether each has been applied and when. The returned slice and its
 // cloned `name` strings are allocated with `allocator`; free them with
-// destroy_statuses.
+// destroy_statuses. (Read-only; no advisory lock is taken.)
 status :: proc(
 	db: ^sql.DB,
 	migrations: []Migration,
@@ -172,10 +199,12 @@ status :: proc(
 	out: []Status,
 	err: Error,
 ) {
-	ensure_table(db) or_return
+	conn := sql.checkout(db) or_return
+	defer sql.checkin(&conn)
+	ensure_table(&conn) or_return
 
 	applied := make(map[i64]time.Time, allocator = context.temp_allocator)
-	rows := sql.query(db, "SELECT version, applied_at FROM " + MIGRATIONS_TABLE) or_return
+	rows := sql.query(&conn, "SELECT version, applied_at FROM " + MIGRATIONS_TABLE) or_return
 	defer sql.close_rows(&rows)
 	for sql.next(&rows) {
 		v: i64
@@ -211,14 +240,24 @@ destroy_statuses :: proc(statuses: []Status, allocator := context.allocator) {
 
 // --- internals ---------------------------------------------------------------
 
+// acquire_lock takes the migrations advisory lock if the driver supports it,
+// reporting whether a lock was actually taken (so the caller knows whether to
+// release one). A no-op returning false on drivers without locking (SQLite).
 @(private)
-ensure_table :: proc(db: ^sql.DB) -> Error {
+acquire_lock :: proc(conn: ^sql.Conn) -> (locked: bool, err: Error) {
+	if !sql.supports_advisory_lock(conn) {return false, nil}
+	if e := sql.advisory_lock(conn, LOCK_KEY); e != nil {return false, e}
+	return true, nil
+}
+
+@(private)
+ensure_table :: proc(conn: ^sql.Conn) -> Error {
 	// Portable across SQLite and PostgreSQL: BIGINT/TEXT/TIMESTAMP are native to
 	// both, and IF NOT EXISTS makes this safe to run on every startup. (On
 	// SQLite, BIGINT PRIMARY KEY is NOT a rowid alias, so the explicit version
 	// values are stored as given.)
 	_, e := sql.exec(
-		db,
+		conn,
 		"CREATE TABLE IF NOT EXISTS " +
 		MIGRATIONS_TABLE +
 		" (version BIGINT PRIMARY KEY, name TEXT NOT NULL, applied_at TIMESTAMP NOT NULL)",
@@ -244,13 +283,13 @@ validated :: proc(migrations: []Migration) -> ([]Migration, Error) {
 
 @(private)
 applied_versions :: proc(
-	db: ^sql.DB,
+	conn: ^sql.Conn,
 	allocator := context.allocator,
 ) -> (
 	versions: []i64,
 	err: Error,
 ) {
-	rows := sql.query(db, "SELECT version FROM " + MIGRATIONS_TABLE + " ORDER BY version") or_return
+	rows := sql.query(conn, "SELECT version FROM " + MIGRATIONS_TABLE + " ORDER BY version") or_return
 	defer sql.close_rows(&rows)
 	list := make([dynamic]i64, allocator)
 	for sql.next(&rows) {
@@ -265,8 +304,8 @@ applied_versions :: proc(
 }
 
 @(private)
-apply_one :: proc(db: ^sql.DB, m: Migration) -> Error {
-	tx := sql.begin(db) or_return
+apply_one :: proc(conn: ^sql.Conn, m: Migration) -> Error {
+	tx := sql.begin(conn) or_return
 	if _, e := sql.exec(&tx, m.up); e != nil {
 		sql.rollback(&tx)
 		return e
@@ -286,11 +325,11 @@ apply_one :: proc(db: ^sql.DB, m: Migration) -> Error {
 }
 
 @(private)
-revert_one :: proc(db: ^sql.DB, m: Migration) -> Error {
+revert_one :: proc(conn: ^sql.Conn, m: Migration) -> Error {
 	if m.down == "" {
 		return Migrate_Error{kind = .Irreversible, version = m.version, detail = m.name}
 	}
-	tx := sql.begin(db) or_return
+	tx := sql.begin(conn) or_return
 	if _, e := sql.exec(&tx, m.down); e != nil {
 		sql.rollback(&tx)
 		return e

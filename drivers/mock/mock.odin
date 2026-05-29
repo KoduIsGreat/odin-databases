@@ -66,6 +66,8 @@ Mock :: struct {
 	open_db:      ^sql.DB, // back-ref for `close`
 	error_msgs:   [dynamic]string, // owned diagnostic strings, freed on close
 	t:            ^testing.T, // if non-nil, close() auto-asserts all expectations consumed
+	lock_count:   int, // advisory_lock calls (for tests)
+	unlock_count: int, // advisory_unlock calls (for tests)
 }
 
 Call_Log_Entry :: struct {
@@ -110,6 +112,8 @@ open :: proc(t: ^testing.T = nil, allocator := context.allocator) -> (mock: ^Moc
 		begin        = mock_begin,
 		tx_commit    = mock_tx_commit,
 		tx_rollback  = mock_tx_rollback,
+		lock         = mock_lock,
+		unlock       = mock_unlock,
 	}
 
 	d, err := sql.open(&mock.driver, "mock", allocator)
@@ -311,6 +315,22 @@ mock_close_conn :: proc(handle: drv.Conn_Handle) -> drv.Error {
 
 @(private)
 mock_ping  :: proc(handle: drv.Conn_Handle) -> drv.Error {return nil}
+
+// Advisory locking is not expectation-driven — it just records call counts so
+// tests can assert the lock/unlock were taken around a migration run.
+@(private)
+mock_lock :: proc(handle: drv.Conn_Handle, key: i64) -> drv.Error {
+	conn := cast(^Mock_Conn)handle
+	conn.mock.lock_count += 1
+	return nil
+}
+
+@(private)
+mock_unlock :: proc(handle: drv.Conn_Handle, key: i64) -> drv.Error {
+	conn := cast(^Mock_Conn)handle
+	conn.mock.unlock_count += 1
+	return nil
+}
 @(private)
 mock_reset_conn :: proc(handle: drv.Conn_Handle) -> drv.Error {return nil}
 

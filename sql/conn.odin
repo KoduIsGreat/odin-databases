@@ -42,3 +42,33 @@ conn_query :: proc(conn: ^Conn, query_str: string, args: ..Value) -> (Rows, Erro
 	// The caller manages the Conn lifecycle separately.
 	return Rows{db = nil, conn = conn.handle, handle = handle, driver = conn.driver}, nil
 }
+
+// --- Advisory locking ---
+//
+// A session-scoped, application-defined lock for coordinating work (e.g. schema
+// migrations) across processes. The lock is tied to this connection, so hold
+// the same Conn for the duration and release with advisory_unlock on it. See
+// the driver contract for details.
+
+// supports_advisory_lock reports whether the connection's driver implements
+// advisory locking. Callers that need cross-process coordination should branch
+// on this rather than assuming a lock was taken.
+supports_advisory_lock :: proc(conn: ^Conn) -> bool {
+	return conn.driver.lock != nil && conn.driver.unlock != nil
+}
+
+// advisory_lock acquires the driver's advisory lock on this connection,
+// blocking until it is granted. It is a no-op (returns nil) if the driver does
+// not support locking — check supports_advisory_lock first if that distinction
+// matters.
+advisory_lock :: proc(conn: ^Conn, key: i64) -> Error {
+	if conn.driver.lock == nil {return nil}
+	return conn.driver.lock(conn.handle, key)
+}
+
+// advisory_unlock releases a lock previously taken with advisory_lock on the
+// same connection. No-op (returns nil) if the driver does not support locking.
+advisory_unlock :: proc(conn: ^Conn, key: i64) -> Error {
+	if conn.driver.unlock == nil {return nil}
+	return conn.driver.unlock(conn.handle, key)
+}
