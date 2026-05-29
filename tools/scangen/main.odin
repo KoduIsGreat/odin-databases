@@ -308,12 +308,12 @@ main :: proc() {
 	if len(spec.structs) == 0 {
 		fmt.printfln("scangen: no `%s` annotations found in %s", ANNOTATION, dir)
 		// Remove any stale generated file to avoid confusion.
-		out, _ := filepath.join({dir, "scan.gen.odin"})
+		out, _ := filepath.join({dir, "scan.gen.odin"}, context.allocator)
 		os.remove(out)
 		return
 	}
 
-	out, _ := filepath.join({dir, "scan.gen.odin"})
+	out, _ := filepath.join({dir, "scan.gen.odin"}, context.allocator)
 	src := emit(&spec)
 	if werr := os.write_entire_file(out, transmute([]u8)src); werr != nil {
 		fmt.eprintfln("scangen: write %s: %v", out, werr)

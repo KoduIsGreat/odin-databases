@@ -532,7 +532,7 @@ main :: proc() {
 		if pkg_override != "" {schema.pkg_name = pkg_override}
 	}
 
-	out, _ := filepath.join({dir, "schema.gen.odin"})
+	out, _ := filepath.join({dir, "schema.gen.odin"}, context.allocator)
 
 	if len(schema.tables) == 0 {
 		if db_path != "" {

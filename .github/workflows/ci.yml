@@ -12,10 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Pin to the exact Odin release used locally so the stdlib API matches
-      # (bump this when you upgrade Odin). `token` is required to fetch the
-      # release — without it setup-odin falls back to building `master`
-      # (nightly), whose stdlib can differ (e.g. filepath.join's signature).
+      # Pin the Odin release the code is built against (bump when you upgrade).
+      # `token` is required for setup-odin to fetch a release binary.
       - name: Set up Odin
         uses: laytan/setup-odin@v2
         with:
