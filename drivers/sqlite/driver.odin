@@ -312,6 +312,42 @@ sqlite_exec :: proc(
 ) {
 	conn := cast(^Sqlite_Conn)handle
 
+	// Parameterless statements may contain several statements separated by
+	// ';' (e.g. migration / DDL scripts). prepare_v2 only compiles the first
+	// one and reports the unconsumed remainder via pzTail, so loop until the
+	// buffer is drained. The reported Result reflects the final statement.
+	// This mirrors the Postgres driver, where parameterless exec uses the
+	// simple-query protocol and multi-statement DDL works.
+	if len(args) == 0 {
+		last: drv.Result
+		remaining := query_str
+		for len(remaining) > 0 {
+			stmt: ^sql3.stmt
+			tail: cstring
+			rc := sql3.prepare_v2(conn.db, as_cstring(remaining), i32(len(remaining)), &stmt, &tail)
+			if rc != sql3.OK {
+				return {}, make_error(conn.db)
+			}
+			// Advance past whatever prepare_v2 consumed (tail points into
+			// the same buffer, just past the compiled statement).
+			consumed := int(transmute(uintptr)tail - uintptr(raw_data(remaining)))
+			remaining = remaining[consumed:]
+			if stmt == nil {
+				continue // trailing whitespace / comment-only chunk
+			}
+			rc = sql3.step(stmt)
+			sql3.finalize(stmt)
+			if rc != sql3.DONE && rc != sql3.ROW {
+				return {}, make_error(conn.db)
+			}
+			last = drv.Result {
+				last_insert_id = sql3.last_insert_rowid(conn.db),
+				rows_affected  = i64(sql3.changes(conn.db)),
+			}
+		}
+		return last, nil
+	}
+
 	stmt: ^sql3.stmt
 	rc := sql3.prepare_v2(conn.db, as_cstring(query_str), i32(len(query_str)), &stmt, nil)
 	if rc != sql3.OK {

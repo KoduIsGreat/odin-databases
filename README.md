@@ -167,6 +167,30 @@ The `*.gen.odin` files are committed so the demo and examples build on a fresh
 clone without a codegen step; CI regenerates them and fails if they drift from
 the source.
 
+## Schema migrations
+
+`database:migrate` is a small, driver-agnostic migration runner over the `sql`
+core. It applies an ordered set of migrations, records applied versions in a
+`schema_migrations` table, and supports rollback. Each migration body and its
+bookkeeping row run in one transaction.
+
+```odin
+import migrate "database:migrate"
+
+ms, _ := migrate.from_dir("migrations")   // <version>_<name>.up.sql / .down.sql
+defer migrate.destroy_migrations(ms)
+
+applied, err := migrate.up(db, ms)         // apply all pending (idempotent)
+// migrate.down(db, ms)                    // roll back the most recent one
+// migrate.to(db, ms, version)             // up or down to an exact version
+// migrate.status(db, ms)                  // per-migration applied/pending
+```
+
+Migrations are loaded from `.sql` files named `<version>_<name>.up.sql` (plus an
+optional `.down.sql`), where `<version>` is a 14-digit `YYYYMMDDHHMMSS`
+timestamp. You can also build the `[]migrate.Migration` slice by hand — the
+runner only needs the SQL strings. See [`migrations`](examples/migrations).
+
 ## Testing with the mock driver
 
 Test database code without a real database. Pass the test's `t` to `open` and
@@ -212,6 +236,7 @@ All recipes pass `-collection:database=.` for you.
 | `database:sql` | `sql/` | core API + connection pool |
 | `database:sql/driver` | `sql/driver/` | driver contract (`Driver` vtable, `Value`, `Error`) |
 | `database:sqlbuilder` | `sqlbuilder/` | typed SQL builder |
+| `database:migrate` | `migrate/` | schema-migration runner (`up`/`down`/`to`/`status`) |
 | `database:drivers/sqlite` | `drivers/sqlite/` | SQLite driver |
 | `database:drivers/postgres` | `drivers/postgres/` | pure-Odin PostgreSQL driver ([README](drivers/postgres/README.md)) |
 | `database:drivers/mock` | `drivers/mock/` | mock driver for tests |

@@ -37,9 +37,11 @@ check-all:
     odin check sql -no-entry-point {{coll}}
     odin check sql/driver -no-entry-point {{coll}}
     odin check sqlbuilder -no-entry-point {{coll}}
+    odin check migrate -no-entry-point {{coll}}
     odin check examples/quickstart {{coll}}
     odin check examples/query_builder {{coll}}
     odin check examples/introspection {{coll}}
+    odin check examples/migrations {{coll}}
     odin check examples/testing -no-entry-point {{coll}}
     odin check drivers/sqlite -no-entry-point {{coll}}
     odin check drivers/postgres -no-entry-point {{coll}}
@@ -55,6 +57,7 @@ test:
     odin test drivers/sqlite {{coll}}
     odin test drivers/postgres {{coll}}
     odin test sqlbuilder {{coll}}
+    odin test migrate {{coll}}
     odin test tests {{coll}}
     odin test examples/testing {{coll}}
 

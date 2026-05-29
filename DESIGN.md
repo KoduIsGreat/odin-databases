@@ -36,6 +36,9 @@ sql/                  — package sql (DB, Conn, Rows, Row, Stmt, Tx, scan)
   driver/             — package driver: Driver vtable + opaque handles + Value/Error
 sqlbuilder/
   builder.odin        — typed SQL builder (descriptors, predicates) + raw escape hatch
+migrate/
+  migrate.odin        — driver-agnostic migration runner (up/down/to/status)
+  loader.odin         — from_dir: load migrations from <version>_<name>.up/.down.sql
 drivers/
   sqlite/             — sql.Driver implementation for SQLite (+ loadable extensions)
   postgres/           — pure-Odin sql.Driver for PostgreSQL (v3 wire protocol)
@@ -231,6 +234,12 @@ the pool.
   allocator.
 - Transactions use `BEGIN`/`COMMIT`/`ROLLBACK` SQL; `Tx_Handle` is the
   `Sqlite_Conn` pointer (SQLite tx state lives on the connection).
+- **Multi-statement `exec`**: a *parameterless* `exec` runs every
+  `;`-separated statement in the string (looping `prepare_v2` via its `pzTail`
+  out-param), so DDL / migration scripts work. A *parameterized* `exec` (with
+  bound args) keeps the single-statement path. This matches the Postgres
+  driver, whose parameterless path already runs multi-statement DDL via the
+  simple-query protocol.
 - **Extensions**: the static lib is built with JSON1, FTS5, R*Tree, and
   column-metadata, so their SQL functions / virtual tables work through normal
   `exec`/`query`. JSON is just TEXT (→ `string`) or, for JSONB, a BLOB
@@ -407,6 +416,59 @@ into a `Maybe(T)` field as `None`.
 Generated row structs are tagged `//+sql:scan`, so running `scangen` after
 `schemagen` produces concrete scanners for them.
 
+## Key Decisions — migrate
+
+`database:migrate` is a thin migration runner layered on the `sql` core. It
+reuses the same decoupling idea as `schemagen`: the runner consumes a
+`[]Migration` slice and doesn't care where it came from.
+
+### The runner consumes a slice; sources are front-ends
+
+`up`/`down`/`to`/`status` all take `(db: ^sql.DB, migrations: []Migration)`. A
+`Migration` is just `{version, name, up, down}` where `up`/`down` are SQL
+strings. `from_dir` is one front-end that loads them from `.sql` files; building
+the slice by hand (or, later, embedding it via codegen) needs no runner changes.
+This keeps the `sql` core untouched and makes the runner trivially testable
+against the mock or an in-memory SQLite database.
+
+### State: one row per applied version
+
+A `schema_migrations(version BIGINT PK, name TEXT, applied_at TIMESTAMP)` table
+records each applied migration (not just a single "current version" marker), so
+the full history is queryable and `status` can report per-migration state. The
+DDL is portable `CREATE TABLE IF NOT EXISTS` — `BIGINT`/`TEXT`/`TIMESTAMP` are
+native to both SQLite and PostgreSQL — so it is safe to run on every startup.
+
+### Atomicity via one transaction per migration
+
+Each migration's body and its `schema_migrations` row are applied inside a
+single `sql.begin`/`commit`. Both drivers have transactional DDL, so a failed
+migration rolls back cleanly and leaves no half-applied state. This is also why
+the SQLite driver's parameterless `exec` had to run multi-statement scripts (see
+*SQLite driver specifics*): a migration body is usually several statements, and
+they must all run within the one transaction.
+
+### Timestamp versioning, reversible by default
+
+Versions are `i64` and, by the `from_dir` convention, 14-digit `YYYYMMDDHHMMSS`
+timestamps — so ordering is by creation time and two branches rarely collide on
+a number. Migrations are reversible: a `.down.sql` (or non-empty `down` field)
+lets `down`/`to` roll back; an empty `down` marks a migration irreversible and
+rolling back past it returns `Migrate_Error.Irreversible`.
+
+### Error model: a wrapping union
+
+`migrate.Error` is `union { sql.Error, Migrate_Error }`. DB/driver failures
+surface as the wrapped `sql.Error`; migration-specific problems (bad filename,
+duplicate version, missing up, irreversible, unknown version) are a
+`Migrate_Error`. The driver-contract `Error` union is closed and can't be
+extended, so wrapping — rather than adding variants — keeps that contract intact.
+
+### Concurrency
+
+The runner takes no distributed lock; run migrations from a single process at
+startup (or behind your own lock). Within a process, operations are serial.
+
 ## Open Questions
 
 - **Per-Conn column metadata caching**: `[]Column` is allocated per-Rows and
@@ -425,3 +487,12 @@ Generated row structs are tagged `//+sql:scan`, so running `scangen` after
   system.
 - **Irregular pluralization in schemagen**: the singularizer is heuristic; a
   per-table name override could be added if needed.
+- **Migration concurrency lock**: the migrate runner takes no distributed lock.
+  A PostgreSQL advisory lock (and a SQLite no-op, since it is single-writer)
+  would make it safe to run from multiple instances at once.
+- **Embedded migration codegen**: `from_dir` reads `.sql` at runtime. A
+  `migragen`-style front-end emitting an embedded `[]Migration` would give a
+  single self-contained binary and a CI drift check, matching scangen/schemagen.
+- **Out-of-order migrations**: `up` applies any unrecorded version in ascending
+  order, including one whose timestamp precedes an already-applied migration. A
+  strict mode could reject such gaps.

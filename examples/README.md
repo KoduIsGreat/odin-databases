@@ -7,6 +7,7 @@ Focused, runnable examples for odin-databases. Each is its own package.
 | [`quickstart`](quickstart) | The core `database:sql` API with the SQLite driver: `open`, `exec`, transactions + prepared statements, `query_row`, and reflective/positional `scan`. No codegen. | `just run-example quickstart` |
 | [`query_builder`](query_builder) | The typed `sqlbuilder` driven by generated descriptors — `select`/`where`/`order_by`, a typed `join`, typed `insert` via `bind`, `update`/`delete`. Also shows **scangen** + **schemagen (struct mode)** on annotated structs. | `just run-example query_builder` |
 | [`introspection`](introspection) | **schemagen (DB mode)**: generate row structs + descriptors by introspecting a real database (`schema.sql`). Shows nullable columns → `Maybe(T)` and concrete scanners. | `just run-example introspection` |
+| [`migrations`](migrations) | Schema migrations with the **`database:migrate`** runner: load `.sql` files with `from_dir`, `up`/`down`/`status`, timestamp-versioned, reversible. | `just run-example migrations` |
 | [`testing`](testing) | Testing database code with the **mock driver** — no real database needed. | `just test-example testing` |
 
 ## Code generation
