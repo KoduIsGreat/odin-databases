@@ -4,18 +4,22 @@
 // Usage:
 //   odin run tools/schemagen -- <pkg-dir>                            # struct front-end
 //   odin run tools/schemagen -- -db=<path> [-package=<n>] [-structs=singular|none] <pkg-dir>
+//   odin run tools/schemagen -- -driver=postgres -db=<dsn> [...] <pkg-dir>
 //
 // schemagen is built around an internal `Schema` model that decouples the
-// *source* of the schema from the *emitted* code. Two front-ends populate the
+// *source* of the schema from the *emitted* code. The front-ends populate the
 // same `Schema` and share one `emit`:
 //
 //   - front_end_structs: reads annotated Odin structs (the struct is the
 //     source of truth; the row struct already exists, so only descriptors are
 //     emitted). A `Maybe(T)` field marks the column nullable and maps the
-//     descriptor to `Column(T)`.
-//   - front_end_db: opens a database via the driver and reads its schema (the
-//     database is the source of truth, so row structs AND descriptors are
-//     emitted, unless -structs=none).
+//     descriptor to `Column(T)`. Driver-agnostic.
+//   - front_end_db (SQLite, default): opens a `.db` file and reads its schema
+//     via PRAGMA. The database is the source of truth, so row structs AND
+//     descriptors are emitted (unless -structs=none).
+//   - front_end_db_postgres (`-driver=postgres`, `-db=<dsn>`): introspects a
+//     live PostgreSQL server via information_schema. Same emitted output as the
+//     SQLite DB front-end.
 //
 // Nullability
 //
@@ -51,6 +55,7 @@ import "core:slice"
 import "core:strings"
 
 import sql "database:sql"
+import postgres "database:drivers/postgres"
 import sqlite "database:drivers/sqlite"
 
 // --- Internal schema model (the front-end ⇄ emit seam) ---
@@ -71,6 +76,13 @@ Table_Spec :: struct {
 Struct_Mode :: enum {
 	Singular, // row struct = singularized PascalCase table name (default)
 	None, // descriptors only; no row structs
+}
+
+// Driver_Kind selects which driver the DB front-end introspects through.
+// `-db` carries a file path for Sqlite and a DSN for Postgres.
+Driver_Kind :: enum {
+	Sqlite,
+	Postgres,
 }
 
 Schema :: struct {
@@ -408,6 +420,124 @@ front_end_db :: proc(schema: ^Schema, db_path: string) -> bool {
 	return true
 }
 
+// --- DB front-end (PostgreSQL) ---
+
+// pg_udt_to_odin maps a PostgreSQL `udt_name` (the canonical pg_type name from
+// information_schema, e.g. int4/int8/float8/timestamptz/varchar) to the Odin
+// type the driver produces at scan time. Mirrors the driver's OID mapping:
+// int family → i64, float/numeric → f64, bytea → []byte, date/time family →
+// time.Time, everything textual (incl. json/jsonb/uuid) → string. Unknown /
+// user-defined types fall back to string, which the driver returns as text.
+pg_udt_to_odin :: proc(udt: string) -> string {
+	switch udt {
+	case "int2", "int4", "int8", "oid":
+		return "i64"
+	case "float4", "float8", "numeric", "decimal":
+		return "f64"
+	case "bool":
+		return "bool"
+	case "bytea":
+		return "[]byte"
+	case "date", "time", "timetz", "timestamp", "timestamptz":
+		return "time.Time"
+	case:
+		// text, varchar, bpchar, char, name, uuid, json, jsonb, citext, and any
+		// type the driver hands back as text.
+		return "string"
+	}
+}
+
+// list_tables_pg returns the base tables in the `public` schema, sorted by the
+// server for deterministic output. Views and other schemas are skipped, the
+// same spirit as the SQLite front-end.
+@(private = "file")
+list_tables_pg :: proc(db: ^sql.DB) -> ([dynamic]string, bool) {
+	out := make([dynamic]string)
+	rows, qerr := sql.query(
+		db,
+		"SELECT table_name FROM information_schema.tables " +
+		"WHERE table_schema = 'public' AND table_type = 'BASE TABLE' " +
+		"ORDER BY table_name",
+	)
+	if qerr != nil {
+		fmt.eprintfln("schemagen: list tables: %v", qerr)
+		return out, false
+	}
+	defer sql.close_rows(&rows)
+
+	for sql.next(&rows) {
+		if s, ok := sql.row_value(&rows, 0).(string); ok {
+			append(&out, strings.clone(s))
+		}
+	}
+	return out, true
+}
+
+front_end_db_postgres :: proc(schema: ^Schema, dsn: string) -> bool {
+	db, oerr := sql.open(&postgres.driver, dsn)
+	if oerr != nil {
+		fmt.eprintfln("schemagen: open postgres %q: %v", dsn, oerr)
+		return false
+	}
+	defer sql.close(db)
+
+	schema.emit_structs = schema.struct_mode != .None
+
+	table_names, ok := list_tables_pg(db)
+	if !ok {return false}
+
+	for tname in table_names {
+		spec := Table_Spec {
+			name     = tname,
+			accessor = pascal_case(tname),
+		}
+		if schema.emit_structs {
+			spec.struct_name = struct_name_for(tname, spec.accessor)
+		}
+
+		rows, qerr := sql.query(
+			db,
+			"SELECT column_name, udt_name, is_nullable " +
+			"FROM information_schema.columns " +
+			"WHERE table_schema = 'public' AND table_name = ? " +
+			"ORDER BY ordinal_position",
+			tname,
+		)
+		if qerr != nil {
+			fmt.eprintfln("schemagen: columns for %q: %v", tname, qerr)
+			return false
+		}
+
+		for sql.next(&rows) {
+			cname, udt, is_nullable: string
+			for ci in 0 ..< rows.col_count {
+				switch sql.row_col_name(&rows, ci) {
+				case "column_name":
+					if s, sok := sql.row_value(&rows, ci).(string); sok {cname = s}
+				case "udt_name":
+					if s, sok := sql.row_value(&rows, ci).(string); sok {udt = s}
+				case "is_nullable":
+					if s, sok := sql.row_value(&rows, ci).(string); sok {is_nullable = s}
+				}
+			}
+			odin_type := pg_udt_to_odin(udt)
+			if odin_type == "time.Time" {schema.uses_time = true}
+			// information_schema already reports is_nullable = 'NO' for primary-key
+			// and NOT NULL columns, so this single flag is authoritative.
+			nullable := is_nullable == "YES"
+			append(
+				&spec.columns,
+				Column_Spec{name = strings.clone(cname), odin_type = odin_type, nullable = nullable},
+			)
+		}
+		sql.close_rows(&rows)
+
+		append(&schema.tables, spec)
+	}
+
+	return true
+}
+
 // --- Emit ---
 
 @(private = "file")
@@ -490,11 +620,22 @@ main :: proc() {
 	pkg_override := ""
 	dir := ""
 	struct_mode := Struct_Mode.Singular
+	driver_kind := Driver_Kind.Sqlite
 
 	for arg in os.args[1:] {
 		switch {
 		case strings.has_prefix(arg, "-db="):
 			db_path = arg[len("-db="):]
+		case strings.has_prefix(arg, "-driver="):
+			switch arg[len("-driver="):] {
+			case "sqlite":
+				driver_kind = .Sqlite
+			case "postgres", "pg":
+				driver_kind = .Postgres
+			case:
+				fmt.eprintfln("schemagen: -driver must be 'sqlite' or 'postgres', got %q", arg)
+				os.exit(2)
+			}
 		case strings.has_prefix(arg, "-package="):
 			pkg_override = arg[len("-package="):]
 		case strings.has_prefix(arg, "-structs="):
@@ -517,8 +658,13 @@ main :: proc() {
 
 	if dir == "" {
 		fmt.eprintln(
-			"usage: schemagen [-db=<path>] [-package=<name>] [-structs=singular|none] <pkg-dir>",
+			"usage: schemagen [-db=<path-or-dsn>] [-driver=sqlite|postgres] [-package=<name>] [-structs=singular|none] <pkg-dir>",
 		)
+		os.exit(2)
+	}
+
+	if driver_kind == .Postgres && db_path == "" {
+		fmt.eprintln("schemagen: -driver=postgres requires -db=<dsn> (the struct front-end is driver-agnostic)")
 		os.exit(2)
 	}
 
@@ -526,7 +672,14 @@ main :: proc() {
 
 	if db_path != "" {
 		schema.pkg_name = pkg_override if pkg_override != "" else detect_pkg(dir)
-		if !front_end_db(&schema, db_path) {os.exit(1)}
+		ok: bool
+		switch driver_kind {
+		case .Sqlite:
+			ok = front_end_db(&schema, db_path)
+		case .Postgres:
+			ok = front_end_db_postgres(&schema, db_path)
+		}
+		if !ok {os.exit(1)}
 	} else {
 		if !front_end_structs(&schema) {os.exit(1)}
 		if pkg_override != "" {schema.pkg_name = pkg_override}

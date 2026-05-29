@@ -113,6 +113,13 @@ schema dir=".":
 schema-db db dir:
     odin run tools/schemagen {{coll}} -- -db={{db}} {{dir}}
 
+# Run schemagen's PostgreSQL DB front-end: introspect a live server (via
+# information_schema) and write row structs + typed descriptors. <dsn> is a
+# postgres:// URL or keyword DSN, e.g.
+#   just schema-db-postgres 'postgres://odin:secret@localhost:55432/odintest?sslmode=disable' ./myapp
+schema-db-postgres dsn dir:
+    odin run tools/schemagen {{coll}} -- -driver=postgres -db={{dsn}} {{dir}}
+
 # Regenerate the query_builder example (struct mode: scangen + schemagen).
 gen-query-builder: (gen "examples/query_builder")
 

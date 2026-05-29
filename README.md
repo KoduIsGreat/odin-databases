@@ -154,6 +154,13 @@ just gen          # scangen + schemagen on the repo root (or `just gen <dir>`)
   just schema-db app.db ./myapp     # or `just gen-introspection` for the example
   ```
 
+  DB mode introspects SQLite by default; pass a live PostgreSQL server with
+  `-driver=postgres` (introspected via `information_schema`):
+
+  ```sh
+  just schema-db-postgres 'postgres://user:pass@localhost:5432/mydb?sslmode=disable' ./myapp
+  ```
+
 See [`introspection`](examples/introspection) for the DB-mode workflow.
 
 The `*.gen.odin` files are committed so the demo and examples build on a fresh

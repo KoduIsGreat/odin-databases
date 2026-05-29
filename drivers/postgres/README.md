@@ -41,6 +41,25 @@ Recognized keys: `host`/`hostaddr`, `port`, `user`, `password`,
   `numeric` → `f64`, `bytea` → `[]byte`, `date`/`time`/`timestamp`/`timestamptz`
   → `time.Time`, everything textual (incl. `json`/`jsonb`/`uuid`) → `string`.
 
+## Code generation
+
+Both generators work with this driver:
+
+- **scangen** is driver-agnostic — annotate a struct `//+sql:scan` and it emits
+  a concrete `scan_<T>` (the postgres driver produces the same `Value` variants
+  the scanners expect).
+- **schemagen** introspects a live server in DB mode:
+
+  ```sh
+  just schema-db-postgres 'postgres://user:pass@localhost:5432/mydb?sslmode=disable' ./myapp
+  # → ./myapp/schema.gen.odin: row structs + typed sqlbuilder descriptors
+  ```
+
+  It reads `information_schema` (base tables in the `public` schema; views
+  skipped), maps each column's `udt_name` to the Odin type the driver scans, and
+  marks `Maybe(T)` for nullable columns. Run `scangen` after to get concrete
+  scanners for the generated structs.
+
 ## Limitations (v1)
 
 - **No TLS yet.** Connect with `sslmode=disable` (or to a local / self-hosted

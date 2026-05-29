@@ -346,21 +346,27 @@ plain and nullable fields, and a SQL `NULL` leaves the field `None`.
 ### schemagen — typed descriptors, from structs or a database
 
 `schemagen` is built around an internal `Schema` model that decouples the
-*source* of the schema from the *emitted* code. Two front-ends populate the
+*source* of the schema from the *emitted* code. The front-ends populate the
 same model and share one emitter:
 
 - **Struct front-end** (`schemagen <dir>`): reads structs annotated
   `//+sql:table <name>`. The struct is the source of truth, so only descriptors
-  are emitted. A `Maybe(T)` field marks the column nullable.
-- **DB front-end** (`schemagen -db=<path> <dir>`): opens the database via the
-  driver, lists tables via `PRAGMA table_list`, and reads `PRAGMA table_info`.
-  The database is the source of truth, so it emits **both** row structs and
-  descriptors (unless `-structs=none`). `table_list` (not `sqlite_master`) is
-  used so views and the shadow tables that virtual tables (FTS5, R*Tree)
-  create are skipped — only real and virtual tables in the main schema are
-  emitted, sorted for deterministic output.
+  are emitted. A `Maybe(T)` field marks the column nullable. Driver-agnostic.
+- **SQLite DB front-end** (`schemagen -db=<path> <dir>`, the default): opens the
+  database via the driver, lists tables via `PRAGMA table_list`, and reads
+  `PRAGMA table_info`. The database is the source of truth, so it emits **both**
+  row structs and descriptors (unless `-structs=none`). `table_list` (not
+  `sqlite_master`) is used so views and the shadow tables that virtual tables
+  (FTS5, R*Tree) create are skipped — only real and virtual tables in the main
+  schema are emitted, sorted for deterministic output.
+- **PostgreSQL DB front-end** (`schemagen -driver=postgres -db=<dsn> <dir>`):
+  opens a live server via the pure-Odin postgres driver and introspects
+  `information_schema` — `tables` (base tables in the `public` schema only;
+  views are skipped, server-sorted for deterministic output) and `columns`
+  (`column_name`, `udt_name`, `is_nullable`, by `ordinal_position`). Emits the
+  same row-struct + descriptor output as the SQLite front-end.
 
-The DB front-end maps SQLite declared types to the Odin types the driver
+The SQLite DB front-end maps SQLite declared types to the Odin types the driver
 produces at scan time — applying SQLite's affinity rules (`INT*`→`i64`,
 `CHAR/TEXT/CLOB`→`string`, `BLOB`→`[]byte`, `REAL/FLOA/DOUB`→`f64`), the same
 datetime detection (`DATETIME`/`TIMESTAMP`/`DATE`/`TIME`→`time.Time`) as the
@@ -369,6 +375,15 @@ mislead: `JSON`→`string` (`JSONB`→`[]byte`) and `BOOLEAN`→`bool`. A `NUMER
 `DECIMAL` column defaults to `f64`; since such a column may store integers
 (returned as `i64`), the scan layer widens `i64`→`f64`/`f32` so it still scans
 into a float field.
+
+The PostgreSQL front-end maps each column's canonical `udt_name` to the Odin
+type the driver produces, mirroring its OID mapping: `int2`/`int4`/`int8`/`oid`
+→`i64`, `float4`/`float8`/`numeric`/`decimal`→`f64`, `bool`→`bool`,
+`bytea`→`[]byte`, the `date`/`time`/`timetz`/`timestamp`/`timestamptz` family
+→`time.Time`, and everything textual (`text`/`varchar`/`bpchar`/`char`/`name`/
+`uuid`/`json`/`jsonb`, plus any unrecognized / user-defined type the driver
+returns as text)→`string`. (`json`/`jsonb` map to `string` here, not `[]byte`
+as in SQLite, because the postgres driver reads them back in the text format.)
 
 ### Nullability
 
