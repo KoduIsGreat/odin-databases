@@ -201,3 +201,48 @@ test_transaction_rollback :: proc(t: ^testing.T) {
 	if sql.next(&rows) {testing.expect_value(t, sql.scan(&rows, &n), nil)}
 	testing.expect_value(t, n, 0)
 }
+
+// Verifies the advisory-lock contract against a real server: a lock held on one
+// session blocks a second session's non-blocking attempt, and releasing it lets
+// the second session through.
+@(test)
+test_advisory_lock :: proc(t: ^testing.T) {
+	dsn, ok := test_dsn()
+	if !ok {return}
+
+	db, err := sql.open(&driver, dsn)
+	testing.expect_value(t, err, nil)
+	if err != nil {return}
+	defer sql.close(db)
+
+	KEY :: i64(990017)
+
+	c1, e1 := sql.checkout(db)
+	testing.expect_value(t, e1, nil)
+	defer sql.checkin(&c1)
+	c2, e2 := sql.checkout(db)
+	testing.expect_value(t, e2, nil)
+	defer sql.checkin(&c2)
+
+	testing.expect(t, sql.supports_advisory_lock(&c1), "postgres supports advisory lock")
+
+	// c1 takes the lock; c2's non-blocking try should fail while it is held.
+	testing.expect_value(t, sql.advisory_lock(&c1, KEY), nil)
+	testing.expect_value(t, try_lock(t, &c2, KEY), false)
+
+	// After c1 releases, c2's try succeeds.
+	testing.expect_value(t, sql.advisory_unlock(&c1, KEY), nil)
+	testing.expect_value(t, try_lock(t, &c2, KEY), true)
+	testing.expect_value(t, sql.advisory_unlock(&c2, KEY), nil)
+}
+
+// try_lock runs pg_try_advisory_lock (non-blocking) on conn and returns whether
+// the lock was granted.
+@(private = "file")
+try_lock :: proc(t: ^testing.T, conn: ^sql.Conn, key: i64) -> bool {
+	row := sql.query_row(conn, "SELECT pg_try_advisory_lock($1)", key)
+	defer sql.close_row(&row)
+	got: bool
+	testing.expect_value(t, sql.scan(&row, &got), nil)
+	return got
+}

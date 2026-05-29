@@ -57,6 +57,8 @@ driver := drv.Driver {
 	begin        = pg_begin,
 	tx_commit    = pg_tx_commit,
 	tx_rollback  = pg_tx_rollback,
+	lock         = pg_lock,
+	unlock       = pg_unlock,
 }
 
 // --- Internal wrapper types ---
@@ -227,6 +229,22 @@ pg_exec :: proc(
 		send_extended(conn, t, args, false) or_return
 	}
 	return exec_drain(conn)
+}
+
+// pg_lock / pg_unlock implement the driver's advisory-lock contract via
+// PostgreSQL session-level advisory locks. pg_advisory_lock blocks until the
+// lock is granted; pg_advisory_unlock releases it. The lock lives on the
+// session (connection), so the migrate runner holds one Conn across the run.
+@(private)
+pg_lock :: proc(handle: drv.Conn_Handle, key: i64) -> drv.Error {
+	_, err := pg_exec(handle, "SELECT pg_advisory_lock($1)", {key})
+	return err
+}
+
+@(private)
+pg_unlock :: proc(handle: drv.Conn_Handle, key: i64) -> drv.Error {
+	_, err := pg_exec(handle, "SELECT pg_advisory_unlock($1)", {key})
+	return err
 }
 
 @(private)

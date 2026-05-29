@@ -37,15 +37,18 @@ check-all:
     odin check sql -no-entry-point {{coll}}
     odin check sql/driver -no-entry-point {{coll}}
     odin check sqlbuilder -no-entry-point {{coll}}
+    odin check migrate -no-entry-point {{coll}}
     odin check examples/quickstart {{coll}}
     odin check examples/query_builder {{coll}}
     odin check examples/introspection {{coll}}
+    odin check examples/migrations {{coll}}
     odin check examples/testing -no-entry-point {{coll}}
     odin check drivers/sqlite -no-entry-point {{coll}}
     odin check drivers/postgres -no-entry-point {{coll}}
     odin check drivers/mock -no-entry-point {{coll}}
     odin check tools/scangen {{coll}}
     odin check tools/schemagen {{coll}}
+    odin check tools/migragen {{coll}}
     odin check tests -no-entry-point {{coll}}
 
 # Run all tests. The postgres suite skips itself unless ODIN_PG_TEST_DSN is set
@@ -55,6 +58,8 @@ test:
     odin test drivers/sqlite {{coll}}
     odin test drivers/postgres {{coll}}
     odin test sqlbuilder {{coll}}
+    odin test migrate {{coll}}
+    odin test tools/migragen {{coll}}
     odin test tests {{coll}}
     odin test examples/testing {{coll}}
 
@@ -120,6 +125,14 @@ schema-db db dir:
 schema-db-postgres dsn dir:
     odin run tools/schemagen {{coll}} -- -driver=postgres -db={{dsn}} {{dir}}
 
+# Run migragen: embed a directory of .sql migrations into <out-dir>/migrations.gen.odin.
+#   just gen-migrations <sql-dir> <out-dir>
+gen-migrations sqldir outdir:
+    odin run tools/migragen {{coll}} -- {{sqldir}} {{outdir}}
+
+# Regenerate the migrations example's embedded migrations.gen.odin.
+gen-migrations-example: (gen-migrations "examples/migrations/migrations" "examples/migrations")
+
 # Regenerate the query_builder example (struct mode: scangen + schemagen).
 gen-query-builder: (gen "examples/query_builder")
 
@@ -136,7 +149,7 @@ gen-introspection:
     rm -f "$db"
 
 # Regenerate every generated file in the repo.
-gen-all: gen gen-query-builder gen-introspection
+gen-all: gen gen-query-builder gen-introspection gen-migrations-example
 
 # Show what scangen would touch without writing anything (useful for CI guards).
 scan-check dir=".":

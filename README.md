@@ -167,6 +167,48 @@ The `*.gen.odin` files are committed so the demo and examples build on a fresh
 clone without a codegen step; CI regenerates them and fails if they drift from
 the source.
 
+## Schema migrations
+
+`database:migrate` is a small, driver-agnostic migration runner over the `sql`
+core. It applies an ordered set of migrations, records applied versions in a
+`schema_migrations` table, and supports rollback. Each migration body and its
+bookkeeping row run in one transaction.
+
+```odin
+import migrate "database:migrate"
+
+ms, _ := migrate.from_dir("migrations")   // <version>_<name>.up.sql / .down.sql
+defer migrate.destroy_migrations(ms)
+
+applied, err := migrate.up(db, ms)         // apply all pending (idempotent)
+// migrate.down(db, ms)                    // roll back the most recent one
+// migrate.to(db, ms, version)             // up or down to an exact version
+// migrate.status(db, ms)                  // per-migration applied/pending
+```
+
+Migrations are loaded from `.sql` files named `<version>_<name>.up.sql` (plus an
+optional `.down.sql`), where `<version>` is a 14-digit `YYYYMMDDHHMMSS`
+timestamp. You can also build the `[]migrate.Migration` slice by hand — the
+runner only needs the SQL strings.
+
+**Embed instead of reading at runtime.** `migragen` bakes a directory of `.sql`
+files into a generated `migrations.gen.odin` (an embedded `[]migrate.Migration`),
+so the binary ships its migrations internally — no files to deploy:
+
+```sh
+just gen-migrations migrations ./myapp   # writes ./myapp/migrations.gen.odin
+```
+
+```odin
+migrate.up(db, MIGRATIONS)   // MIGRATIONS is the generated slice
+```
+
+**Concurrency.** When the driver supports it (PostgreSQL, via
+`pg_advisory_lock`), `up`/`down`/`to` take a session advisory lock for the run,
+so several app instances booting at once serialize their migrations instead of
+racing. SQLite is single-writer, so it needs no lock. See
+[`migrations`](examples/migrations).
+
 ## Testing with the mock driver
 
 Test database code without a real database. Pass the test's `t` to `open` and
@@ -212,10 +254,11 @@ All recipes pass `-collection:database=.` for you.
 | `database:sql` | `sql/` | core API + connection pool |
 | `database:sql/driver` | `sql/driver/` | driver contract (`Driver` vtable, `Value`, `Error`) |
 | `database:sqlbuilder` | `sqlbuilder/` | typed SQL builder |
+| `database:migrate` | `migrate/` | schema-migration runner (`up`/`down`/`to`/`status`) |
 | `database:drivers/sqlite` | `drivers/sqlite/` | SQLite driver |
 | `database:drivers/postgres` | `drivers/postgres/` | pure-Odin PostgreSQL driver ([README](drivers/postgres/README.md)) |
 | `database:drivers/mock` | `drivers/mock/` | mock driver for tests |
-| — | `tools/{scangen,schemagen}/` | code generators |
+| — | `tools/{scangen,schemagen,migragen}/` | code generators |
 | — | `bindings/sqlite/` | SQLite bindings + static lib |
 | — | `examples/` | runnable examples |
 

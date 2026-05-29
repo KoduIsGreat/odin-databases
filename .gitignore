@@ -8,6 +8,12 @@ bin/
 bindings/sqlite/example/example
 bindings/sqlite/example/main
 
+# Host-built SQLite static libs (the SessionStart hook / build_libs.sh
+# regenerates these per host). darwin_arm64 is checked in intentionally.
+bindings/sqlite/lib/linux_amd64/
+bindings/sqlite/lib/linux_arm64/
+bindings/sqlite/lib/darwin_amd64/
+
 # Local SQLite databases
 test_db
 *.db
