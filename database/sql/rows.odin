@@ -1,8 +1,8 @@
 package sql
 
+import "core:mem"
 import "core:strings"
-
-MAX_SCAN_COLS :: 64
+import "core:time"
 
 // Rows is the result of a query. Call next() to advance to each row,
 // then scan() to read column values.
@@ -25,25 +25,27 @@ MAX_SCAN_COLS :: 64
 //       sql.scan(&rows, &user)
 //   }
 Rows :: struct {
-	db:        ^DB, // non-nil = owns the conn, release on close
-	conn:      Conn_Handle, // only used for pool release
-	handle:    Rows_Handle,
-	driver:    ^Driver,
-	closed:    bool,
+	db:         ^DB, // non-nil = owns the conn, release on close
+	conn:       Conn_Handle, // only used for pool release
+	handle:     Rows_Handle,
+	driver:     ^Driver,
+	created_at: time.Time, // used by pool_release to preserve max_lifetime
+	allocator:  mem.Allocator, // for _values / _cols
+	closed:     bool,
 
 	// Current row state — filled by next()
 	col_count: int,
 	has_row:   bool,
 	_detached: bool, // true = values are owned, scan should not clone
-	_values:   [MAX_SCAN_COLS]Value,
-	_cols:     [MAX_SCAN_COLS]Column, // cached on first next()
+	_values:   []Value,
+	_cols:     []Column, // cached on first next()
 }
 
 // Row holds the result of query_row(). The first row is already
 // buffered and the connection has been released (detached). If the
 // query failed or returned no rows, err is set and surfaced at scan
-// time. Because the underlying resources are already released, there
-// is no need to close a Row.
+// time. close_row() is safe whether the Row succeeded or carries
+// an error — it is a no-op for detached/error Rows.
 Row :: struct {
 	err:  Error,
 	rows: Rows,
@@ -51,9 +53,9 @@ Row :: struct {
 
 // --- Codegen accessors ---
 //
-// These small inline accessors exist so generated row-mapper code (see
-// tools/scangen) can read the buffered row state without reaching into
-// the underscore-prefixed fields directly. User code should normally
+// These accessors exist so generated row-mapper code (see tools/scangen)
+// in a *different package* can read the buffered row state without us
+// exporting the underscore-prefixed fields. User code should normally
 // use scan() / scan_row() instead.
 
 row_value :: #force_inline proc(rows: ^Rows, i: int) -> Value {
@@ -81,27 +83,44 @@ columns :: proc(rows: ^Rows) -> []Column {
 // close_rows().
 next :: proc(rows: ^Rows) -> bool {
 	if rows.closed {return false}
-	if rows.col_count == 0 {
+	if rows._values == nil {
 		cols := columns(rows)
 		if cols == nil {return false}
+		alloc := rows.allocator if rows.allocator.procedure != nil else context.allocator
+		rows.allocator = alloc
 		rows.col_count = len(cols)
+		rows._values = make([]Value, rows.col_count, alloc)
+		rows._cols = make([]Column, rows.col_count, alloc)
 		for i in 0 ..< rows.col_count {
 			rows._cols[i] = cols[i]
 		}
 	}
-	rows.has_row = rows.driver.rows_next(rows.handle, rows._values[:rows.col_count])
+	rows.has_row = rows.driver.rows_next(rows.handle, rows._values)
 	return rows.has_row
 }
 
 // close_rows closes the result set. If the Rows owns a connection
-// (from a convenience db query), it is returned to the pool.
+// (from a convenience db query), it is returned to the pool. Safe to
+// call multiple times.
 close_rows :: proc(rows: ^Rows) -> Error {
 	if rows.closed {return nil}
 	rows.closed = true
 	rows.has_row = false
-	err := rows.driver.rows_close(rows.handle)
+
+	err: Error
+	if rows.driver != nil && rows.handle != nil {
+		err = rows.driver.rows_close(rows.handle)
+	}
+	if rows._values != nil {
+		delete(rows._values, rows.allocator)
+		rows._values = nil
+	}
+	if rows._cols != nil {
+		delete(rows._cols, rows.allocator)
+		rows._cols = nil
+	}
 	if rows.db != nil {
-		pool_release(rows.db, rows.conn, {})
+		pool_release(rows.db, rows.conn, rows.created_at)
 	}
 	return err
 }
@@ -131,7 +150,7 @@ detach_rows :: proc(rows: ^Rows) -> Error {
 	// has_row and _values intentionally preserved
 	err := rows.driver.rows_close(rows.handle)
 	if rows.db != nil {
-		pool_release(rows.db, rows.conn, {})
+		pool_release(rows.db, rows.conn, rows.created_at)
 	}
 	return err
 }

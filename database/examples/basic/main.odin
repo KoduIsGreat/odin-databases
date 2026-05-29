@@ -2,7 +2,7 @@ package basic
 
 import sql "../../../database/sql"
 import sb "../../../database/sqlbuilder"
-import sqlite3 "../../../database/sqlite"
+import sqlite3 "../../../drivers/sqlite"
 import "core:fmt"
 import vmem "core:mem/virtual"
 import "core:time"
@@ -19,21 +19,31 @@ init_db :: proc(db: ^sql.DB) -> sql.Error {
 		db,
 		"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, created_at DATETIME)",
 	) or_return
+
 	tx := sql.begin(db) or_return
-	stmt := sql.prepare(&tx, "INSERT INTO users (name, age, created_at) VALUES(?, ?, ?)") or_return
-
-	now := time.now()
-
-	res, err := sql.stmt_exec(&stmt, {"Adam", i64(35), now})
-	sql.stmt_exec(&stmt, {"Joe", i64(37), now})
-	sql.stmt_exec(&stmt, {"Mark", i64(36), now})
-	sql.stmt_exec(&stmt, {"gamer", i64(32), now})
-
-	if tx_err := sql.commit(&tx); tx_err != nil {
-		return tx_err
+	stmt, perr := sql.prepare(&tx, "INSERT INTO users (name, age, created_at) VALUES(?, ?, ?)")
+	if perr != nil {
+		sql.rollback(&tx)
+		return perr
 	}
 
-	return nil
+	now := time.now()
+	seed := [?][3]sql.Value{
+		{"Adam",  i64(35), now},
+		{"Joe",   i64(37), now},
+		{"Mark",  i64(36), now},
+		{"gamer", i64(32), now},
+	}
+	for &row in seed {
+		if _, err := sql.stmt_exec(&stmt, row[:]); err != nil {
+			sql.close_stmt(&stmt)
+			sql.rollback(&tx)
+			return err
+		}
+	}
+
+	sql.close_stmt(&stmt)
+	return sql.commit(&tx)
 }
 
 main :: proc() {

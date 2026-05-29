@@ -6,7 +6,7 @@ when ODIN_OS == .Darwin && ODIN_ARCH == .arm64 {
 } else when ODIN_OS == .Darwin && ODIN_ARCH == .amd64 {
 	foreign import lib {"../lib/darwin_amd64/libsqlite3.a", "system:c"}
 } else when ODIN_OS == .Linux && ODIN_ARCH == .amd64 {
-	foreign import lib {"../lib/linux_amd64/libsqlite3.a", "system:c", "system:m", "system:dl"}
+	foreign import lib {"../lib/linux_amd64/libsqlite3.a", "system:c", "system:m", "system:dl", "system:pthread"}
 } else when ODIN_OS == .Linux && ODIN_ARCH == .arm64 {
 	foreign import lib {"../lib/linux_arm64/libsqlite3.a", "system:c", "system:m", "system:dl", "system:pthread"}
 } else when ODIN_OS == .Windows && ODIN_ARCH == .amd64 {

@@ -11,23 +11,29 @@ import "core:time"
 //
 // All Rows and Stmts created from a Tx must be closed before
 // commit or rollback.
+//
+// Error policy on commit/rollback: if the driver returns an error, the
+// underlying connection may be in an inconsistent state and is *not*
+// returned to the pool — it is closed instead (Go's database/sql does
+// the same). Callers should treat the Tx as terminal.
 Tx :: struct {
 	db:          ^DB, // non-nil = owns the conn, release on commit/rollback
 	conn_handle: Conn_Handle,
 	tx_handle:   Tx_Handle,
 	driver:      ^Driver,
+	created_at:  time.Time, // preserved for pool_release lifetime tracking
 	done:        bool,
 }
 
 // begin from the pool — checks out a connection, Tx owns it.
 @(private)
 db_begin :: proc(db: ^DB, opts := Tx_Options{}) -> (Tx, Error) {
-	conn, _, cerr := pool_acquire(db)
+	conn, created_at, cerr := pool_acquire(db)
 	if cerr != nil {return {}, cerr}
 
 	handle, terr := db.driver.begin(conn, opts)
 	if terr != nil {
-		pool_release(db, conn, time.now())
+		pool_release(db, conn, created_at)
 		return {}, terr
 	}
 
@@ -36,6 +42,7 @@ db_begin :: proc(db: ^DB, opts := Tx_Options{}) -> (Tx, Error) {
 			conn_handle = conn,
 			tx_handle   = handle,
 			driver      = db.driver,
+			created_at  = created_at,
 		}, nil
 }
 
@@ -50,6 +57,7 @@ conn_begin :: proc(conn: ^Conn, opts := Tx_Options{}) -> (Tx, Error) {
 			conn_handle = conn.handle,
 			tx_handle   = handle,
 			driver      = conn.driver,
+			created_at  = conn.created_at,
 		}, nil
 }
 
@@ -81,9 +89,7 @@ commit :: proc(tx: ^Tx) -> Error {
 	}
 	tx.done = true
 	err := tx.driver.tx_commit(tx.tx_handle)
-	if tx.db != nil {
-		pool_release(tx.db, tx.conn_handle, {})
-	}
+	tx_release_conn(tx, err)
 	return err
 }
 
@@ -93,8 +99,19 @@ rollback :: proc(tx: ^Tx) -> Error {
 	}
 	tx.done = true
 	err := tx.driver.tx_rollback(tx.tx_handle)
-	if tx.db != nil {
-		pool_release(tx.db, tx.conn_handle, {})
-	}
+	tx_release_conn(tx, err)
 	return err
+}
+
+// tx_release_conn returns the connection to the pool on success, or
+// discards it (closes it) on driver error. No-op when the Tx borrowed
+// its connection from an explicit Conn (the caller still owns it).
+@(private)
+tx_release_conn :: proc(tx: ^Tx, err: Error) {
+	if tx.db == nil {return}
+	if err != nil {
+		pool_discard(tx.db, tx.conn_handle)
+	} else {
+		pool_release(tx.db, tx.conn_handle, tx.created_at)
+	}
 }

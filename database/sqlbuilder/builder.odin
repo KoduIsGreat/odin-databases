@@ -1,3 +1,26 @@
+// sqlbuilder — a minimal SQL string builder.
+//
+// This is intentionally a *string builder*, not a query DSL: it appends
+// clauses in the order the caller calls them and assumes the caller knows
+// SQL. There is no type-system enforcement of clause order — you are
+// responsible for calling `select`/`from`/`where_clause`/... in a valid
+// sequence. Use the procedures as a slightly safer alternative to
+// `fmt.bprintf`, mainly for parameter ($-substitution) tracking.
+//
+// Identifier handling
+//
+// Procedures that accept identifier names (`select`, `from`, `update`,
+// `delete_from`, `order_by`, `join`'s table) write them verbatim. They do
+// NOT escape — DO NOT pass untrusted input. Use `ident()` to validate at
+// runtime; it returns `false` for anything that isn't a plain identifier
+// (letters, digits, `_`, optionally one `.` for `table.col`).
+//
+// Values
+//
+// Anything that should be a SQL parameter goes through `param()` /
+// `where_clause(..., args)` / `values()` / `set_cols(..., args)` — these
+// append `?` placeholders to the SQL text and record the value in the
+// `args` slice returned by `to_query()`.
 package sqlbuilder
 
 import "core:strings"
@@ -21,6 +44,7 @@ init :: proc(b: ^Builder, allocator := context.allocator) {
 	b.args = make([dynamic]Value, allocator)
 	b.where_count = 0
 	b.set_count = 0
+	b.join_count = 0
 }
 
 destroy :: proc(b: ^Builder) {
@@ -33,6 +57,7 @@ reset :: proc(b: ^Builder) {
 	clear(&b.args)
 	b.where_count = 0
 	b.set_count = 0
+	b.join_count = 0
 }
 
 // Low-level procs
@@ -44,6 +69,30 @@ write :: proc(b: ^Builder, sql_str: string) {
 param :: proc(b: ^Builder, val: Value) {
 	strings.write_string(&b.buf, "?")
 	append(&b.args, val)
+}
+
+// ident returns true if name is a plain SQL identifier safe to write
+// verbatim into a query — letters, digits, underscore, optionally one
+// `.` for table-qualified columns. Use it to guard caller-supplied
+// column / table names before passing them to the builder.
+ident :: proc(name: string) -> bool {
+	if len(name) == 0 {return false}
+	dots := 0
+	for i in 0 ..< len(name) {
+		ch := name[i]
+		switch {
+		case ch >= 'a' && ch <= 'z':
+		case ch >= 'A' && ch <= 'Z':
+		case ch == '_':
+		case (ch >= '0' && ch <= '9') && i > 0:
+		case ch == '.':
+			dots += 1
+			if dots > 1 || i == 0 || i == len(name) - 1 {return false}
+		case:
+			return false
+		}
+	}
+	return true
 }
 
 // SELECT query procs
@@ -79,12 +128,10 @@ where_clause :: proc(b: ^Builder, clause: string, args: ..Value) {
 		append(&b.args, arg)
 	}
 }
+
+// join writes ` JOIN <table> ON <clause>`, recording any args.
+// Subsequent calls write additional JOIN clauses (not chained ANDs).
 join :: proc(b: ^Builder, table: string, clause: string, args: ..Value) {
-	if b.join_count == 0 {
-		strings.write_string(&b.buf, " JOIN ")
-	} else {
-		strings.write_string(&b.buf, " AND ")
-	}
 	strings.write_string(&b.buf, " JOIN ")
 	strings.write_string(&b.buf, table)
 	strings.write_string(&b.buf, " ON ")

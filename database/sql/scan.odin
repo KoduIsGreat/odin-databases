@@ -35,13 +35,13 @@ scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_st
 		col_name := rows._cols[ci].name
 		for fi in 0 ..< si.field_count {
 			if si.names[fi] == col_name {
-				if vtype := set_field(
+				if vtype, ok := set_field(
 					dest,
 					si.offsets[fi],
 					si.types[fi].id,
 					rows._values[ci],
 					rows._detached,
-				); vtype != nil {
+				); !ok {
 					return Scan_Error {
 						kind = .Column_Type_Mismatch,
 						col_idx = ci,
@@ -104,8 +104,8 @@ scan_values_impl :: proc(rows: ^Rows, dests: []any) -> Error {
 			}
 		}
 		dest_ptr := (^rawptr)(d.data)^
-		if vtype := set_field(dest_ptr, 0, p.elem.id, rows._values[i], rows._detached);
-		   vtype != nil {
+		if vtype, ok := set_field(dest_ptr, 0, p.elem.id, rows._values[i], rows._detached);
+		   !ok {
 			return Scan_Error {
 				kind = .Column_Type_Mismatch,
 				col_idx = i,
@@ -113,7 +113,6 @@ scan_values_impl :: proc(rows: ^Rows, dests: []any) -> Error {
 				dest_type = d.id,
 				value_type = vtype,
 			}
-
 		}
 	}
 
@@ -145,8 +144,21 @@ scan :: proc {
 	scan_values,
 }
 
+// set_field writes a column value into the field at base+offset, coercing
+// where possible (e.g. i64→int, i64→bool). On mismatch it returns the
+// source value's typeid and ok=false so callers can build a diagnostic.
+// On success (or Null, which leaves the field untouched) it returns (_, true).
 @(private)
-set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value, owned: bool) -> typeid {
+set_field :: proc(
+	base: rawptr,
+	offset: uintptr,
+	tid: typeid,
+	val: Value,
+	owned: bool,
+) -> (
+	value_type: typeid,
+	ok: bool,
+) {
 	ptr := rawptr(uintptr(base) + offset)
 
 	#partial switch v in val {
@@ -171,7 +183,7 @@ set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value, owned:
 		case bool:
 			(^bool)(ptr)^ = v != 0
 		case:
-			return i64
+			return i64, false
 		}
 	case f64:
 		switch tid {
@@ -180,13 +192,13 @@ set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value, owned:
 		case f32:
 			(^f32)(ptr)^ = f32(v)
 		case:
-			return f64
+			return f64, false
 		}
 	case string:
-		if tid != string {return string}
+		if tid != string {return string, false}
 		(^string)(ptr)^ = v if owned else strings.clone(v)
 	case []byte:
-		if tid != []byte {return []byte}
+		if tid != []byte {return []byte, false}
 		if owned {
 			(^[]byte)(ptr)^ = v
 		} else {
@@ -195,13 +207,13 @@ set_field :: proc(base: rawptr, offset: uintptr, tid: typeid, val: Value, owned:
 			(^[]byte)(ptr)^ = cloned
 		}
 	case bool:
-		if tid != bool {return bool}
+		if tid != bool {return bool, false}
 		(^bool)(ptr)^ = v
 	case time.Time:
-		if tid != time.Time {return time.Time}
+		if tid != time.Time {return time.Time, false}
 		(^time.Time)(ptr)^ = v
 	case Null:
 	// Leave field unchanged
 	}
-	return nil
+	return nil, true
 }

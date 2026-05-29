@@ -22,9 +22,23 @@ build: scan
 check:
     odin check .
 
+# Type-check every importable package in the repo. Library packages get
+# -no-entry-point so the check doesn't fail looking for `main`.
+check-all:
+    odin check .
+    odin check database/sql -no-entry-point
+    odin check database/sqlbuilder -no-entry-point
+    odin check database/examples/basic
+    odin check drivers/sqlite -no-entry-point
+    odin check drivers/mock -no-entry-point
+    odin check tools/scangen
+    odin check tests -no-entry-point
+
 # Run all tests.
 test:
     odin test drivers/mock
+    odin test database/sqlbuilder
+    odin test tests
 
 # Run tests in a specific package.
 test-pkg pkg:

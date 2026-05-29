@@ -47,6 +47,7 @@ Expectation_Kind :: enum {
 Args_Predicate :: proc(args: []drv.Value) -> bool
 
 Expectation :: struct {
+	mock:       ^Mock, // back-ref so attach procs (returns_rows etc) know the allocator
 	kind:       Expectation_Kind,
 	sql_match:  string, // substring; "" matches anything
 	args_check: Args_Predicate, // optional
@@ -138,6 +139,16 @@ fail :: proc(m: ^Mock, format: string, args: ..any) -> drv.Error {
 	msg := fmt.aprintf(format, ..args, allocator = m.allocator)
 	append(&m.error_msgs, msg)
 	return drv.Driver_Error{code = -1, message = msg}
+}
+
+// panic_with_msg formats a message into the mock-owned arena then panics.
+// Used for fixture/invariant violations where there is no good error
+// channel back to the caller (e.g. inside the driver hot path).
+@(private)
+panic_with_msg :: proc(m: ^Mock, format: string, args: ..any) -> ! {
+	msg := fmt.aprintf(format, ..args, allocator = m.allocator)
+	append(&m.error_msgs, msg)
+	panic(msg)
 }
 
 // --- Internal handle types ---------------------------------------------------
@@ -335,7 +346,15 @@ mock_rows_next :: proc(handle: drv.Rows_Handle, dest: []drv.Value) -> bool {
 	if rows.pos >= len(rows.rows) {return false}
 	src := rows.rows[rows.pos]
 	rows.pos += 1
-	for i in 0 ..< min(len(dest), len(src)) {
+	// returns_rows() validates row shape against columns, so if we get here
+	// the only way `len(src) != len(dest)` is a driver/sql bug, not a test
+	// fixture mistake. Fail loudly.
+	if len(src) != len(dest) {
+		panic_with_msg(rows.mock,
+			"sqlmock: row width mismatch — dest has %d cols, fixture row has %d",
+			len(dest), len(src))
+	}
+	for i in 0 ..< len(dest) {
 		dest[i] = src[i]
 	}
 	return true

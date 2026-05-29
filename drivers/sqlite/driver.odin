@@ -86,11 +86,19 @@ bind_args :: proc(stmt: ^sql3.stmt, args: []drv.Value) -> i32 {
 		case []byte:
 			rc = sql3.bind_blob(stmt, idx, rawptr(raw_data(v)), i32(len(v)), sql3.TRANSIENT)
 		case time.Time:
-			// Format as ISO-8601 TEXT: "YYYY-MM-DD HH:MM:SS"
-			buf: [19]u8
+			// ISO-8601 TEXT with nanosecond precision: "YYYY-MM-DD HH:MM:SS.NNNNNNNNN".
+			// SQLite's date functions ignore the fractional seconds suffix, so this
+			// stays compatible while preserving sub-second precision on round-trip.
+			buf: [29]u8
 			yr, mo, dy := time.date(v)
 			hr, mn, sc := time.clock(v)
-			s := fmt.bprintf(buf[:], "%4d-%02d-%02d %02d:%02d:%02d", yr, int(mo), dy, hr, mn, sc)
+			ns := time.time_to_unix_nano(v) % i64(1e9)
+			if ns < 0 {ns += i64(1e9)}
+			s := fmt.bprintf(
+				buf[:],
+				"%4d-%02d-%02d %02d:%02d:%02d.%09d",
+				yr, int(mo), dy, hr, mn, sc, ns,
+			)
 			rc = sql3.bind_text(stmt, idx, as_cstring(s), i32(len(s)), sql3.TRANSIENT)
 		case drv.Null:
 			rc = sql3.bind_null(stmt, idx)
@@ -144,7 +152,9 @@ read_values :: proc(stmt: ^sql3.stmt, dest: []drv.Value, cols: []drv.Column) {
 	}
 }
 
-// Parse "YYYY-MM-DD HH:MM:SS" into time.Time. Minimal parser — no timezone.
+// Parse "YYYY-MM-DD HH:MM:SS[.fractional]" into time.Time. The fractional
+// suffix is optional and may be any number of digits (only the first 9 are
+// significant for nanoseconds). No timezone parsing.
 @(private)
 parse_datetime :: proc(s: string) -> (t: time.Time, ok: bool) {
 	if len(s) < 19 {return {}, false}
@@ -158,7 +168,27 @@ parse_datetime :: proc(s: string) -> (t: time.Time, ok: bool) {
 	min := parse_int(s[14:16]) or_return
 	sec := parse_int(s[17:19]) or_return
 
-	return time.datetime_to_time(i64(year), i64(month), i64(day), i64(hour), i64(min), i64(sec))
+	base := time.datetime_to_time(
+		i64(year), i64(month), i64(day),
+		i64(hour), i64(min), i64(sec),
+	) or_return
+
+	// Optional ".fff..." — parse up to 9 digits, scale to nanoseconds.
+	if len(s) > 20 && s[19] == '.' {
+		nanos := 0
+		scale := i64(1e9)
+		i := 20
+		for i < len(s) && i < 29 {
+			ch := s[i]
+			if ch < '0' || ch > '9' {break}
+			nanos = nanos * 10 + int(ch - '0')
+			scale /= 10
+			i += 1
+		}
+		// Pad to nanoseconds if the caller wrote fewer than 9 digits.
+		base._nsec += i64(nanos) * scale
+	}
+	return base, true
 }
 
 @(private)
@@ -198,17 +228,27 @@ build_columns :: proc(
 }
 
 // Check if a SQLite declared type name indicates a datetime column.
-// Matches: DATETIME, DATE, TIMESTAMP, TIME, and common variations.
+// Matches any decltype whose first token (case-insensitive) is DATETIME,
+// DATE, TIMESTAMP, or TIME — so DATETIME(6), `TIMESTAMP WITH TIME ZONE`,
+// etc., are recognized.
 @(private)
 is_datetime_decltype :: proc(decltype: string) -> bool {
-	upper: [32]u8
-	n := min(len(decltype), 32)
-	for i in 0 ..< n {
-		ch := decltype[i]
-		upper[i] = ch - 32 if ch >= 'a' && ch <= 'z' else ch
+	// First token only — stop at a space, paren, or other non-alpha.
+	end := 0
+	for end < len(decltype) {
+		ch := decltype[end]
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {break}
+		end += 1
 	}
-	s := string(upper[:n])
-	return s == "DATETIME" || s == "TIMESTAMP" || s == "DATE" || s == "TIME"
+	if end == 0 || end > 16 {return false}
+
+	buf: [16]u8
+	for i in 0 ..< end {
+		ch := decltype[i]
+		buf[i] = ch - 32 if ch >= 'a' && ch <= 'z' else ch
+	}
+	tok := string(buf[:end])
+	return tok == "DATETIME" || tok == "TIMESTAMP" || tok == "DATE" || tok == "TIME"
 }
 
 // --- Connection lifecycle ---

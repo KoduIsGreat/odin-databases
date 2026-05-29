@@ -45,6 +45,7 @@ expect_rollback :: proc(m: ^Mock) -> ^Expectation {
 @(private)
 enqueue :: proc(m: ^Mock, kind: Expectation_Kind, sql_match: string) -> ^Expectation {
 	e := new(Expectation, m.allocator)
+	e.mock = m
 	e.kind = kind
 	e.sql_match = sql_match
 	append(&m.expectations, e)
@@ -60,15 +61,28 @@ returns_result :: proc(e: ^Expectation, last_insert_id: i64 = 0, rows_affected: 
 
 // returns_rows configures a Query/Stmt_Query expectation with the columns
 // and row values to deliver. The slices are deep-copied into the mock's
-// allocator so the caller can pass literals or stack-local data freely.
-returns_rows :: proc(e: ^Expectation, columns: []string, rows: [][]drv.Value, allocator := context.allocator) -> ^Expectation {
-	cols_copy := make([]string, len(columns), allocator)
+// allocator (the same one that frees them in close()) so the caller can
+// pass literals or stack-local data freely.
+//
+// Panics if any row's value count doesn't match the column count — that
+// is a fixture mistake worth surfacing immediately rather than at row-read
+// time deep inside the driver.
+returns_rows :: proc(e: ^Expectation, columns: []string, rows: [][]drv.Value) -> ^Expectation {
+	for row, i in rows {
+		if len(row) != len(columns) {
+			panic_with_msg(e.mock,
+				"sqlmock: row %d has %d value(s) but %d column(s) declared",
+				i, len(row), len(columns))
+		}
+	}
+	alloc := e.mock.allocator
+	cols_copy := make([]string, len(columns), alloc)
 	for c, i in columns {
 		cols_copy[i] = c // strings are immutable; sharing is fine
 	}
-	rows_copy := make([][]drv.Value, len(rows), allocator)
+	rows_copy := make([][]drv.Value, len(rows), alloc)
 	for row, i in rows {
-		dst := make([]drv.Value, len(row), allocator)
+		dst := make([]drv.Value, len(row), alloc)
 		for v, j in row {
 			dst[j] = v
 		}
