@@ -196,6 +196,12 @@ set_field :: proc(
 			(^u16)(ptr)^ = u16(v)
 		case bool:
 			(^bool)(ptr)^ = v != 0
+		case f64:
+			// SQLite NUMERIC/DECIMAL columns store integral values as INTEGER;
+			// widen so they still scan into a float field.
+			(^f64)(ptr)^ = f64(v)
+		case f32:
+			(^f32)(ptr)^ = f32(v)
 		case:
 			return i64, false
 		}

@@ -251,7 +251,7 @@ pool_acquire :: proc(db: ^DB) -> (Conn_Handle, time.Time, Error) {
 			driver := db.driver
 			dsn := db.dsn
 			allocator := db.allocator
-			// Drop the lock for the (slow) open() call.
+			//TODO (this seems hacky) Drop the lock for the (slow) open() call.
 			sync.mutex_unlock(&db.mu)
 			handle, err := driver.open(driver.data, dsn, allocator)
 			sync.mutex_lock(&db.mu)

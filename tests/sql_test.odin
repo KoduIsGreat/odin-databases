@@ -153,6 +153,30 @@ test_many_columns :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(cols_out), N)
 }
 
+// --- NUMERIC column (integral value stored as INTEGER) scans into a float ---
+
+@(test)
+test_scan_integer_into_float :: proc(t: ^testing.T) {
+	m, db := mock.open(t)
+	defer mock.close(m, db)
+
+	Row :: struct {
+		n: f64,
+	}
+	// A NUMERIC/DECIMAL column holding an integral value comes back as i64;
+	// it must still scan into an f64 field.
+	mock.returns_rows(mock.expect_query(m, "SELECT"), {"n"}, {{i64(42)}})
+
+	rows, err := sql.query(db, "SELECT n FROM t")
+	testing.expect_value(t, err, nil)
+	defer sql.close_rows(&rows)
+
+	testing.expect(t, sql.next(&rows), "expected a row")
+	r: Row
+	testing.expect_value(t, sql.scan(&rows, &r), nil)
+	testing.expect_value(t, r.n, f64(42))
+}
+
 // --- nullable columns scan into Maybe(T) fields ----------------------------
 
 @(test)

@@ -258,11 +258,14 @@ emit_field_case :: proc(b: ^strings.Builder, f: ^Field_Spec) {
 	case .Int_From_I64:
 		ws(b, "\t\t\tif v, ok := val.(i64); ok { dest.", f.name, " = ", f.odin_type, "(v) }\n")
 	case .Float_From_F64:
-		if f.odin_type == "f64" {
-			ws(b, "\t\t\tif v, ok := val.(f64); ok { dest.", f.name, " = v }\n")
-		} else {
-			ws(b, "\t\t\tif v, ok := val.(f64); ok { dest.", f.name, " = f32(v) }\n")
-		}
+		// Accept an i64 source too: SQLite NUMERIC/DECIMAL columns store
+		// integral values as INTEGER, which the driver reads back as i64.
+		conv := "v" if f.odin_type == "f64" else "f32(v)"
+		iconv := "f64(v)" if f.odin_type == "f64" else "f32(v)"
+		ws(b, "\t\t\t#partial switch v in val {\n")
+		ws(b, "\t\t\tcase f64: dest.", f.name, " = ", conv, "\n")
+		ws(b, "\t\t\tcase i64: dest.", f.name, " = ", iconv, "\n")
+		ws(b, "\t\t\t}\n")
 	case .Bool:
 		ws(b, "\t\t\t#partial switch x in val {\n")
 		ws(b, "\t\t\tcase bool: dest.", f.name, " = x\n")

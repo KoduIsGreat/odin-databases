@@ -45,6 +45,7 @@ check-all:
 # Run all tests.
 test:
     odin test drivers/mock
+    odin test drivers/sqlite
     odin test database/sqlbuilder
     odin test tests
     odin test examples/testing

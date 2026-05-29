@@ -210,6 +210,13 @@ the pool.
   allocator.
 - Transactions use `BEGIN`/`COMMIT`/`ROLLBACK` SQL; `Tx_Handle` is the
   `Sqlite_Conn` pointer (SQLite tx state lives on the connection).
+- **Extensions**: the static lib is built with JSON1, FTS5, R*Tree, and
+  column-metadata, so their SQL functions / virtual tables work through normal
+  `exec`/`query`. JSON is just TEXT (→ `string`) or, for JSONB, a BLOB
+  (→ `[]byte`); parse it with `core:encoding/json`. Run-time loadable
+  extensions are supported via `sqlite.enable_load_extension` +
+  `sqlite.load_extension` on a checked-out connection (off by default, and
+  per-connection — see the proc docs for the pool caveat).
 
 ## Key Decisions — sqlbuilder
 
@@ -288,15 +295,22 @@ same model and share one emitter:
   `//+sql:table <name>`. The struct is the source of truth, so only descriptors
   are emitted. A `Maybe(T)` field marks the column nullable.
 - **DB front-end** (`schemagen -db=<path> <dir>`): opens the database via the
-  driver, lists tables from `sqlite_master`, and reads `PRAGMA table_info`. The
-  database is the source of truth, so it emits **both** row structs and
-  descriptors (unless `-structs=none`).
+  driver, lists tables via `PRAGMA table_list`, and reads `PRAGMA table_info`.
+  The database is the source of truth, so it emits **both** row structs and
+  descriptors (unless `-structs=none`). `table_list` (not `sqlite_master`) is
+  used so views and the shadow tables that virtual tables (FTS5, R*Tree)
+  create are skipped — only real and virtual tables in the main schema are
+  emitted, sorted for deterministic output.
 
 The DB front-end maps SQLite declared types to the Odin types the driver
 produces at scan time — applying SQLite's affinity rules (`INT*`→`i64`,
-`CHAR/TEXT/CLOB`→`string`, `BLOB`→`[]byte`, `REAL/FLOA/DOUB`→`f64`) and the same
+`CHAR/TEXT/CLOB`→`string`, `BLOB`→`[]byte`, `REAL/FLOA/DOUB`→`f64`), the same
 datetime detection (`DATETIME`/`TIMESTAMP`/`DATE`/`TIME`→`time.Time`) as the
-driver, so generated types match scan results.
+driver, and special cases for types whose NUMERIC affinity would otherwise
+mislead: `JSON`→`string` (`JSONB`→`[]byte`) and `BOOLEAN`→`bool`. A `NUMERIC`/
+`DECIMAL` column defaults to `f64`; since such a column may store integers
+(returned as `i64`), the scan layer widens `i64`→`f64`/`f32` so it still scans
+into a float field.
 
 ### Nullability
 

@@ -36,8 +36,10 @@
 // scanners for them (run scangen after schemagen).
 //
 // Type mapping (DB mode): int family → i64, REAL → f64, TEXT → string,
-// BLOB/none → []byte, DATE/TIME family → time.Time; unrecognized affinities
-// default to f64. Mirrors the driver so generated types match scan results.
+// BLOB/none → []byte, DATE/TIME family → time.Time, JSON → string (JSONB →
+// []byte), BOOLEAN → bool; NUMERIC/unrecognized affinities default to f64
+// (the scan layer coerces an integral i64 into a float field). Mirrors the
+// driver so generated types match scan results.
 package schemagen
 
 import "core:fmt"
@@ -45,6 +47,7 @@ import "core:odin/ast"
 import "core:odin/parser"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 
 import sql "../../database/sql"
@@ -282,6 +285,17 @@ decltype_to_odin :: proc(decltype: string) -> (odin_type: string, ok: bool) {
 
 	up := strings.to_upper(trimmed, context.temp_allocator)
 	switch {
+	// JSON has NUMERIC affinity but is stored/returned as TEXT (json1) or, for
+	// JSONB (SQLite 3.45+), as a BLOB. Handle it before the affinity rules so a
+	// column declared JSON/JSONB doesn't fall through to the f64 default.
+	case strings.contains(up, "JSONB"):
+		return "[]byte", true
+	case strings.contains(up, "JSON"):
+		return "string", true
+	// BOOLEAN has NUMERIC affinity but is stored/read as INTEGER 0/1; the scan
+	// layer coerces i64 → bool. Check before INT (BOOL contains no "INT").
+	case strings.contains(up, "BOOL"):
+		return "bool", true
 	case strings.contains(up, "INT"):
 		return "i64", true
 	case strings.contains(up, "CHAR"), strings.contains(up, "CLOB"), strings.contains(up, "TEXT"):
@@ -295,21 +309,38 @@ decltype_to_odin :: proc(decltype: string) -> (odin_type: string, ok: bool) {
 	}
 }
 
-// query_column runs a query and returns column `col` of every row, cloned.
+// list_tables returns the introspectable table names, sorted. It uses
+// PRAGMA table_list (SQLite 3.37+) so it can skip views and the shadow tables
+// that virtual tables (FTS5, R*Tree) create — keeping only real and virtual
+// tables in the main schema. Sorting keeps generated output deterministic.
 @(private = "file")
-query_column :: proc(db: ^sql.DB, q: string, col := 0) -> ([dynamic]string, bool) {
+list_tables :: proc(db: ^sql.DB) -> ([dynamic]string, bool) {
 	out := make([dynamic]string)
-	rows, qerr := sql.query(db, q)
+	rows, qerr := sql.query(db, "PRAGMA table_list")
 	if qerr != nil {
-		fmt.eprintfln("schemagen: query %q: %v", q, qerr)
+		fmt.eprintfln("schemagen: PRAGMA table_list: %v", qerr)
 		return out, false
 	}
 	defer sql.close_rows(&rows)
+
 	for sql.next(&rows) {
-		if v, ok := sql.row_value(&rows, col).(string); ok {
-			append(&out, strings.clone(v))
+		name, schema, ttype: string
+		for ci in 0 ..< rows.col_count {
+			switch sql.row_col_name(&rows, ci) {
+			case "name":
+				if s, ok := sql.row_value(&rows, ci).(string); ok {name = s}
+			case "schema":
+				if s, ok := sql.row_value(&rows, ci).(string); ok {schema = s}
+			case "type":
+				if s, ok := sql.row_value(&rows, ci).(string); ok {ttype = s}
+			}
 		}
+		if schema != "main" {continue} // skip temp / attached schemas
+		if ttype != "table" && ttype != "virtual" {continue} // skip views, shadow tables
+		if strings.has_prefix(name, "sqlite_") {continue} // skip internal tables
+		append(&out, strings.clone(name))
 	}
+	slice.sort(out[:])
 	return out, true
 }
 
@@ -323,10 +354,7 @@ front_end_db :: proc(schema: ^Schema, db_path: string) -> bool {
 
 	schema.emit_structs = schema.struct_mode != .None
 
-	table_names, ok := query_column(
-		db,
-		"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-	)
+	table_names, ok := list_tables(db)
 	if !ok {return false}
 
 	for tname in table_names {
