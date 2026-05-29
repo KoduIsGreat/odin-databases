@@ -42,15 +42,18 @@ check-all:
     odin check examples/introspection {{coll}}
     odin check examples/testing -no-entry-point {{coll}}
     odin check drivers/sqlite -no-entry-point {{coll}}
+    odin check drivers/postgres -no-entry-point {{coll}}
     odin check drivers/mock -no-entry-point {{coll}}
     odin check tools/scangen {{coll}}
     odin check tools/schemagen {{coll}}
     odin check tests -no-entry-point {{coll}}
 
-# Run all tests.
+# Run all tests. The postgres suite skips itself unless ODIN_PG_TEST_DSN is set
+# (see `just test-postgres`), but is built here so its test code can't bitrot.
 test:
     odin test drivers/mock {{coll}}
     odin test drivers/sqlite {{coll}}
+    odin test drivers/postgres {{coll}}
     odin test sqlbuilder {{coll}}
     odin test tests {{coll}}
     odin test examples/testing {{coll}}
@@ -58,6 +61,28 @@ test:
 # Run tests in a specific package.
 test-pkg pkg:
     odin test {{pkg}} {{coll}}
+
+# Run the PostgreSQL driver's integration tests against a live server. The
+# tests skip themselves unless ODIN_PG_TEST_DSN is set, so pass a DSN:
+#   just test-postgres 'postgres://odin:secret@localhost:55432/odintest?sslmode=disable'
+# Spin a throwaway server up first with `just postgres-docker`.
+test-postgres dsn:
+    ODIN_PG_TEST_DSN='{{dsn}}' odin test drivers/postgres {{coll}}
+
+# Start a throwaway PostgreSQL 17 container for `just test-postgres`
+# (user=odin, password=secret, db=odintest, host port 55432). Requires Docker.
+postgres-docker:
+    docker rm -f odin-pg-test >/dev/null 2>&1 || true
+    docker run -d --name odin-pg-test \
+        -e POSTGRES_PASSWORD=secret -e POSTGRES_USER=odin -e POSTGRES_DB=odintest \
+        -p 55432:5432 postgres:17
+    @echo "Waiting for readiness..."
+    until docker exec odin-pg-test pg_isready -U odin -d odintest >/dev/null 2>&1; do sleep 1; done
+    @echo "Ready. DSN: postgres://odin:secret@localhost:55432/odintest?sslmode=disable"
+
+# Stop and remove the throwaway PostgreSQL container.
+postgres-docker-stop:
+    docker rm -f odin-pg-test >/dev/null 2>&1 || true
 
 # --- Examples -----------------------------------------------------------------
 

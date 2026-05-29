@@ -5,13 +5,16 @@ package sql
 // connection back to the pool (via detach_rows). Any query error or
 // "no rows" is stored in Row.err and surfaced when scan is called.
 //
-// Because the connection is released in query_row itself, there is
-// no need for the caller to close the Row. close_row() is provided
-// for symmetry and is safe to call on any Row — including error Rows
-// where no driver handle was ever acquired.
+// The connection is released inside query_row, but the Row still buffers the
+// detached column metadata and values, so the caller must close_row() to free
+// them — use `defer sql.close_row(&row)`. close_row() is safe on any Row,
+// including error Rows where no driver handle was ever acquired. Any string /
+// []byte values moved out by scan() are owned by the scan destination and
+// outlive close_row() (free them like any scanned value).
 //
 // Usage:
 //   row := sql.query_row(db, "SELECT * FROM users WHERE id = ?", i64(1))
+//   defer sql.close_row(&row)
 //   user: User
 //   if err := sql.scan(&row, &user); err != nil { ... }
 

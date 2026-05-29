@@ -38,6 +38,7 @@ sqlbuilder/
   builder.odin        — typed SQL builder (descriptors, predicates) + raw escape hatch
 drivers/
   sqlite/             — sql.Driver implementation for SQLite (+ loadable extensions)
+  postgres/           — pure-Odin sql.Driver for PostgreSQL (v3 wire protocol)
   mock/               — expectation-based mock driver for tests
 tools/
   scangen/            — generates concrete row scanners from //+sql:scan structs
@@ -131,14 +132,20 @@ strings/bytes and releases the conn back to the pool), and returns a `Row`.
 
 ```odin
 row := sql.query_row(db, "SELECT * FROM users WHERE id = ?", i64(1))
+defer sql.close_row(&row)
 user: User
 if err := sql.scan(&row, &user); err != nil { ... }
 ```
 
 `Row` is lazy-error: any query or "no rows" failure is held in `row.err` and
-surfaced when `scan` is called. `close_row(&row)` is safe whether the row
-succeeded, errored, or detached — error rows carry a pre-closed `Rows` so the
-common `defer sql.close_row(&row)` idiom never crashes.
+surfaced when `scan` is called. The connection is released inside `query_row`,
+but the detached `Row` still buffers its cloned column metadata and values, so
+`close_row(&row)` is required to free them — hence the `defer sql.close_row(&row)`
+idiom. `close_row` is safe whether the row succeeded, errored, or detached —
+error rows carry a pre-closed `Rows`, so it never crashes. String/`[]byte`
+values that `scan` moves out are owned by the scan destination and outlive
+`close_row` (cloned with `context.allocator`, freed by the caller); the column
+buffers are freed with `db.allocator` by `close_row`.
 
 ### Pool semantics
 
@@ -231,6 +238,43 @@ the pool.
   extensions are supported via `sqlite.enable_load_extension` +
   `sqlite.load_extension` on a checked-out connection (off by default, and
   per-connection — see the proc docs for the pool caveat).
+
+### PostgreSQL driver specifics
+
+The PostgreSQL driver is **pure Odin** — it implements the v3 frontend/backend
+wire protocol directly over a `core:net` TCP socket, with no libpq dependency.
+This was a deliberate choice: libpq buffers the *entire* result set before
+returning, which fights the driver contract's streaming `rows_next` +
+borrowed-value model. Reading `DataRow` messages straight off the socket *is*
+that streaming model, so the protocol decoder refills one per-`Rows` buffer per
+row, exactly like the SQLite driver does with `sqlite3_step`.
+
+- **Auth**: trust, cleartext, MD5, and SCRAM-SHA-256 (the modern default),
+  built on `core:crypto` (`pbkdf2`/`hmac`/`sha2`) and `core:encoding/base64`.
+  The server signature is verified before the connection is considered open.
+- **TLS is deferred.** v1 connects in plaintext (`sslmode=disable`); `require`/
+  `verify-*` return an error. TLS needs a transport `core` doesn't yet provide,
+  so it will arrive as an OpenSSL-backed layer (then native, once Odin ships TLS).
+- **Placeholders**: the rest of the toolkit (and `sqlbuilder`) emit `?`, but
+  PostgreSQL wants `$1, $2, …`. The driver translates `?`→`$n`, skipping `?`
+  inside string/identifier literals, dollar-quoted strings, and comments;
+  native `$n` passes through untouched. (A bare jsonb `?` operator is the one
+  casualty — wrap it in a dollar-quoted string.)
+- **Text format**: parameters and results use the text wire format, so the
+  driver parses textual values (and hex `bytea`) into the `Value` union, applying
+  the same OID→Odin-type affinity choices `schemagen`'s DB mode makes. No binary
+  protocol yet.
+- **No last-insert id**: PostgreSQL doesn't report one without `RETURNING`, so
+  `Result.last_insert_id` is always 0; `rows_affected` comes from the
+  CommandComplete tag. Use `RETURNING id` + `query_row` for generated keys.
+- **Transactions** use `BEGIN`/`COMMIT`/`ROLLBACK` (with `ISOLATION LEVEL …`
+  derived from `Tx_Options`); `Tx_Handle` is the connection pointer, since
+  PostgreSQL transaction state lives on the connection — the same shape as the
+  SQLite driver.
+- **exec vs. query**: parameterless statements use the simple query protocol
+  (so multi-statement DDL works); parameterized ones use the extended protocol
+  (Parse/Bind/Describe/Execute/Sync). Either way the connection is always
+  drained to ReadyForQuery before reuse, so pooled connections stay clean.
 
 ## Key Decisions — sqlbuilder
 

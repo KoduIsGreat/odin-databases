@@ -111,6 +111,14 @@ close_rows :: proc(rows: ^Rows) -> Error {
 	if rows.driver != nil && rows.handle != nil {
 		err = rows.driver.rows_close(rows.handle)
 	}
+	// A detached Row owns its cloned column-name strings (see detach_rows). For
+	// a live Rows the names are borrowed from the driver, which frees them in
+	// rows_close above, so only free them here when detached.
+	if rows._detached {
+		for i in 0 ..< len(rows._cols) {
+			delete(rows._cols[i].name, rows.allocator)
+		}
+	}
 	if rows._values != nil {
 		delete(rows._values, rows.allocator)
 		rows._values = nil
@@ -133,9 +141,13 @@ close_rows :: proc(rows: ^Rows) -> Error {
 @(private)
 detach_rows :: proc(rows: ^Rows) -> Error {
 	if rows.closed {return nil}
-	// Clone borrowed data before close — driver frees it on rows_close.
+	// Clone borrowed data before close — the driver frees it on rows_close.
+	// Column names are cloned with rows.allocator and freed by close_rows;
+	// string/[]byte values are cloned with context.allocator so scan() can
+	// move them into caller-owned memory (the caller frees them, exactly as
+	// with a normal scan off a live Rows).
 	for i in 0 ..< rows.col_count {
-		rows._cols[i].name = strings.clone(rows._cols[i].name)
+		rows._cols[i].name = strings.clone(rows._cols[i].name, rows.allocator)
 		#partial switch &v in rows._values[i] {
 		case string:
 			v = strings.clone(v)
@@ -145,12 +157,18 @@ detach_rows :: proc(rows: ^Rows) -> Error {
 			v = cloned
 		}
 	}
-	rows.closed = true
 	rows._detached = true
-	// has_row and _values intentionally preserved
+	// has_row and _values are intentionally preserved for the later scan.
+	//
+	// Release the driver result and connection now, then clear handle/db so
+	// the eventual close_rows() frees the buffered values/columns exactly once
+	// without re-closing the result or re-releasing the connection. (We do NOT
+	// set rows.closed here — close_rows must still run to free the buffers.)
 	err := rows.driver.rows_close(rows.handle)
+	rows.handle = nil
 	if rows.db != nil {
 		pool_release(rows.db, rows.conn, rows.created_at)
+		rows.db = nil
 	}
 	return err
 }

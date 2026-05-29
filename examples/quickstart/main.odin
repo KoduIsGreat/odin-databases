@@ -75,6 +75,7 @@ main :: proc() {
 	fmt.println("--- query_row ---")
 	{
 		row := sql.query_row(db, "SELECT * FROM users WHERE name = ?", "Alice")
+		defer sql.close_row(&row)
 		u: User
 		if err := sql.scan(&row, &u); err != nil {
 			fmt.eprintfln("scan: %v", err)

@@ -5,6 +5,7 @@
 // database:sql).
 package sql_tests
 
+import "core:mem"
 import "core:testing"
 import "core:thread"
 import "core:time"
@@ -48,6 +49,41 @@ test_close_row_safe_on_driver_error :: proc(t: ^testing.T) {
 
 	_, ok := row.err.(sql.Driver_Error)
 	testing.expect(t, ok, "expected Driver_Error on error Row")
+}
+
+// A successful query_row + scan + close_row must leave nothing allocated.
+// Regression test: detach_rows used to mark the Row closed, so close_row
+// no-op'd and leaked the cloned column buffers/names on every query_row call.
+@(test)
+test_query_row_no_leak :: proc(t: ^testing.T) {
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+	context.allocator = mem.tracking_allocator(&track)
+
+	UserRow :: struct {
+		id:   i64,
+		name: string,
+	}
+
+	{
+		m, db := mock.open(t)
+		defer mock.close(m, db)
+		mock.returns_structs(mock.expect_query(m, "SELECT"), []UserRow{{id = 1, name = "Alice"}})
+
+		row := sql.query_row(db, "SELECT id, name FROM users WHERE id = ?", i64(1))
+		defer sql.close_row(&row)
+
+		u: UserRow
+		err := sql.scan(&row, &u)
+		testing.expect_value(t, err, nil)
+		testing.expect_value(t, u.id, 1)
+		testing.expect_value(t, u.name, "Alice")
+		delete(u.name) // a scanned string is caller-owned (moved out of the detached Row)
+	}
+
+	leaked := len(track.allocation_map)
+	testing.expectf(t, leaked == 0, "query_row leaked %d allocation(s)", leaked)
 }
 
 // --- pool: max_open + wait timeout -----------------------------------------

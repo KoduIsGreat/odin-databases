@@ -13,8 +13,9 @@ A database access toolkit for [Odin](https://odin-lang.org):
 - **code generators** — `scangen` (fast row scanners) and `schemagen` (typed
   column descriptors + row structs) driven by struct annotations *or* live
   database introspection.
-- **drivers** — a SQLite driver (JSON1/FTS5/R*Tree, loadable extensions) and an
-  expectation-based **mock** driver for tests.
+- **drivers** — a SQLite driver (JSON1/FTS5/R*Tree, loadable extensions), a
+  pure-Odin **PostgreSQL** driver (wire protocol, no libpq; SCRAM-SHA-256), and
+  an expectation-based **mock** driver for tests.
 
 See [`DESIGN.md`](DESIGN.md) for the rationale behind each piece and
 [`examples/`](examples) for runnable, focused examples.
@@ -205,6 +206,7 @@ All recipes pass `-collection:database=.` for you.
 | `database:sql/driver` | `sql/driver/` | driver contract (`Driver` vtable, `Value`, `Error`) |
 | `database:sqlbuilder` | `sqlbuilder/` | typed SQL builder |
 | `database:drivers/sqlite` | `drivers/sqlite/` | SQLite driver |
+| `database:drivers/postgres` | `drivers/postgres/` | pure-Odin PostgreSQL driver ([README](drivers/postgres/README.md)) |
 | `database:drivers/mock` | `drivers/mock/` | mock driver for tests |
 | — | `tools/{scangen,schemagen}/` | code generators |
 | — | `bindings/sqlite/` | SQLite bindings + static lib |
