@@ -12,11 +12,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Pin to the Odin release the project targets; bump as needed.
+      # Pin to the exact Odin release used locally so the stdlib API matches
+      # (bump this when you upgrade Odin). `token` is required to fetch the
+      # release — without it setup-odin falls back to building `master`
+      # (nightly), whose stdlib can differ (e.g. filepath.join's signature).
       - name: Set up Odin
         uses: laytan/setup-odin@v2
         with:
           release: dev-2026-04
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up just
         uses: extractions/setup-just@v2

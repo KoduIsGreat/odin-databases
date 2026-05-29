@@ -43,8 +43,8 @@ import "base:runtime"
 import "core:fmt"
 import "core:odin/ast"
 import "core:odin/parser"
-import "core:os"
 import "core:path/filepath"
+import "core:os"
 import "core:strings"
 
 // --- Specs collected from the AST ---
