@@ -49,6 +49,8 @@ check-all:
     odin check tools/scangen {{coll}}
     odin check tools/schemagen {{coll}}
     odin check tools/migragen {{coll}}
+    odin check tools/migranew {{coll}}
+    odin check tools/odb {{coll}}
     odin check tests -no-entry-point {{coll}}
 
 # Run all tests. The postgres suite skips itself unless ODIN_PG_TEST_DSN is set
@@ -60,6 +62,7 @@ test:
     odin test sqlbuilder {{coll}}
     odin test migrate {{coll}}
     odin test tools/migragen {{coll}}
+    odin test tools/migranew {{coll}}
     odin test tests {{coll}}
     odin test examples/testing {{coll}}
 
@@ -101,6 +104,18 @@ test-example name:
 
 # --- Code generation ----------------------------------------------------------
 
+# Unified codegen CLI: dispatches to every generator as a subcommand, e.g.
+#   just odb scan ./pkg
+#   just odb schema -db=app.db ./pkg
+#   just odb migrate-gen ./migrations ./pkg
+#   just odb <cmd> -h        # flags for a subcommand
+odb *args:
+    odin run tools/odb {{coll}} -- {{args}}
+
+# Build the unified `odb` CLI to bin/odb (so it can be run without `odin run`).
+odb-build:
+    odin build tools/odb {{coll}} -out:bin/odb
+
 # Run scangen on a package directory (default: repo root).
 # Generates `<dir>/scan.gen.odin` for any struct tagged `//+sql:scan`.
 scan dir=".":
@@ -124,6 +139,12 @@ schema-db db dir:
 #   just schema-db-postgres 'postgres://odin:secret@localhost:55432/odintest?sslmode=disable' ./myapp
 schema-db-postgres dsn dir:
     odin run tools/schemagen {{coll}} -- -driver=postgres -db={{dsn}} {{dir}}
+
+# Scaffold a new, empty migration pair (<version>_<name>.up.sql / .down.sql)
+# into <dir>, using a fresh YYYYMMDDHHMMSS timestamp.
+#   just migrate-new migrations "create users"
+migrate-new dir name:
+    odin run tools/migranew {{coll}} -- {{dir}} "{{name}}"
 
 # Run migragen: embed a directory of .sql migrations into <out-dir>/migrations.gen.odin.
 #   just gen-migrations <sql-dir> <out-dir>

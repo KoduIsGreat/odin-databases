@@ -22,6 +22,7 @@
 // (and errors) apply — it is simply from_dir plus an Odin emitter.
 package migragen
 
+import "core:flags"
 import "core:fmt"
 import "core:odin/parser"
 import "core:os"
@@ -30,51 +31,50 @@ import "core:strings"
 
 import migrate "database:migrate"
 
-main :: proc() {
-	sql_dir, out_dir, pkg_override, var_name := parse_args()
+// Options is the migragen command line, parsed declaratively by core:flags.
+Options :: struct {
+	sql_dir:  string `args:"pos=0,required" usage:"directory of <version>_<name>.up.sql / .down.sql files"`,
+	out_dir:  string `args:"pos=1,required" usage:"package directory to write migrations.gen.odin into"`,
+	pkg:      string `args:"name=package"   usage:"package name for the generated file (default: inferred from out-dir)"`,
+	var_name: string `args:"name=var"       usage:"name of the generated slice (default: MIGRATIONS)"`,
+}
 
-	migs, err := migrate.from_dir(sql_dir)
+// run parses args and embeds the migrations, returning a process exit code.
+// `prog` is the program name shown in usage ("migragen" standalone,
+// "odb migrate-gen" under the unified CLI). Exposed for the `odb` dispatcher.
+run :: proc(prog: string, args: []string) -> int {
+	opt := Options {
+		var_name = "MIGRATIONS", // default; overwritten only if -var is given
+	}
+	program_args := make([]string, len(args) + 1, context.temp_allocator)
+	program_args[0] = prog
+	copy(program_args[1:], args)
+	flags.parse_or_exit(&opt, program_args) // handles -h / usage / errors
+
+	migs, err := migrate.from_dir(opt.sql_dir)
 	if err != nil {
-		fmt.eprintfln("migragen: load %s: %v", sql_dir, err)
-		os.exit(1)
+		fmt.eprintfln("migragen: load %s: %v", opt.sql_dir, err)
+		return 1
 	}
 	defer migrate.destroy_migrations(migs)
 
-	pkg_name := pkg_override
+	pkg_name := opt.pkg
 	if pkg_name == "" {
-		pkg_name = infer_package_name(out_dir)
+		pkg_name = infer_package_name(opt.out_dir)
 	}
 
-	src := emit(pkg_name, var_name, migs)
-	out, _ := filepath.join({out_dir, "migrations.gen.odin"}, context.allocator)
+	src := emit(pkg_name, opt.var_name, migs)
+	out, _ := filepath.join({opt.out_dir, "migrations.gen.odin"}, context.allocator)
 	if werr := os.write_entire_file(out, transmute([]u8)src); werr != nil {
 		fmt.eprintfln("migragen: write %s: %v", out, werr)
-		os.exit(1)
+		return 1
 	}
 	fmt.printfln("migragen: wrote %s (%d migration(s))", out, len(migs))
+	return 0
 }
 
-parse_args :: proc() -> (sql_dir, out_dir, pkg, var_name: string) {
-	var_name = "MIGRATIONS"
-	positional: [dynamic]string
-	defer delete(positional)
-
-	for arg in os.args[1:] {
-		switch {
-		case strings.has_prefix(arg, "-package="):
-			pkg = arg[len("-package="):]
-		case strings.has_prefix(arg, "-var="):
-			var_name = arg[len("-var="):]
-		case:
-			append(&positional, arg)
-		}
-	}
-
-	if len(positional) != 2 {
-		fmt.eprintln("usage: migragen <sql-dir> <out-dir> [-package=<name>] [-var=<NAME>]")
-		os.exit(2)
-	}
-	return positional[0], positional[1], pkg, var_name
+main :: proc() {
+	os.exit(run(os.args[0], os.args[1:]))
 }
 
 // infer_package_name reads the package declaration of any .odin file already in

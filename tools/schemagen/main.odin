@@ -46,6 +46,7 @@
 // driver so generated types match scan results.
 package schemagen
 
+import "core:flags"
 import "core:fmt"
 import "core:odin/ast"
 import "core:odin/parser"
@@ -615,93 +616,93 @@ detect_pkg :: proc(dir: string) -> string {
 	return "main"
 }
 
-main :: proc() {
-	db_path := ""
-	pkg_override := ""
-	dir := ""
-	struct_mode := Struct_Mode.Singular
+// Options is the schemagen command line, parsed declaratively by core:flags.
+// `driver` and `structs` are validated by hand (not enum-parsed) to keep the
+// lowercase `-driver=postgres` / `-structs=none` spellings exactly.
+Options :: struct {
+	dir:    string `args:"pos=0,required" usage:"package directory to write schema.gen.odin into"`,
+	db:     string `args:"name=db"        usage:"introspect this database instead of structs (SQLite file path, or a DSN with -driver=postgres)"`,
+	driver: string `args:"name=driver"    usage:"DB driver for -db: sqlite (default) or postgres"`,
+	pkg:    string `args:"name=package"   usage:"override the generated package name"`,
+	structs: string `args:"name=structs"  usage:"DB-mode row structs: singular (default) or none"`,
+}
+
+// run parses args and generates the descriptors, returning a process exit
+// code. `prog` is the program name shown in usage ("schemagen" standalone,
+// "odb schema" under the unified CLI). Exposed for the `odb` dispatcher.
+run :: proc(prog: string, args: []string) -> int {
+	opt: Options
+	program_args := make([]string, len(args) + 1, context.temp_allocator)
+	program_args[0] = prog
+	copy(program_args[1:], args)
+	flags.parse_or_exit(&opt, program_args) // handles -h / usage / errors
+
 	driver_kind := Driver_Kind.Sqlite
-
-	for arg in os.args[1:] {
-		switch {
-		case strings.has_prefix(arg, "-db="):
-			db_path = arg[len("-db="):]
-		case strings.has_prefix(arg, "-driver="):
-			switch arg[len("-driver="):] {
-			case "sqlite":
-				driver_kind = .Sqlite
-			case "postgres", "pg":
-				driver_kind = .Postgres
-			case:
-				fmt.eprintfln("schemagen: -driver must be 'sqlite' or 'postgres', got %q", arg)
-				os.exit(2)
-			}
-		case strings.has_prefix(arg, "-package="):
-			pkg_override = arg[len("-package="):]
-		case strings.has_prefix(arg, "-structs="):
-			switch arg[len("-structs="):] {
-			case "singular":
-				struct_mode = .Singular
-			case "none":
-				struct_mode = .None
-			case:
-				fmt.eprintfln("schemagen: -structs must be 'singular' or 'none', got %q", arg)
-				os.exit(2)
-			}
-		case strings.has_prefix(arg, "-"):
-			fmt.eprintfln("schemagen: unknown flag %q", arg)
-			os.exit(2)
-		case:
-			dir = arg
-		}
+	switch opt.driver {
+	case "", "sqlite":
+		driver_kind = .Sqlite
+	case "postgres", "pg":
+		driver_kind = .Postgres
+	case:
+		fmt.eprintfln("schemagen: -driver must be 'sqlite' or 'postgres', got %q", opt.driver)
+		return 2
 	}
 
-	if dir == "" {
-		fmt.eprintln(
-			"usage: schemagen [-db=<path-or-dsn>] [-driver=sqlite|postgres] [-package=<name>] [-structs=singular|none] <pkg-dir>",
-		)
-		os.exit(2)
+	struct_mode := Struct_Mode.Singular
+	switch opt.structs {
+	case "", "singular":
+		struct_mode = .Singular
+	case "none":
+		struct_mode = .None
+	case:
+		fmt.eprintfln("schemagen: -structs must be 'singular' or 'none', got %q", opt.structs)
+		return 2
 	}
 
-	if driver_kind == .Postgres && db_path == "" {
+	if driver_kind == .Postgres && opt.db == "" {
 		fmt.eprintln("schemagen: -driver=postgres requires -db=<dsn> (the struct front-end is driver-agnostic)")
-		os.exit(2)
+		return 2
 	}
 
-	schema := Schema{dir = dir, struct_mode = struct_mode}
+	schema := Schema{dir = opt.dir, struct_mode = struct_mode}
 
-	if db_path != "" {
-		schema.pkg_name = pkg_override if pkg_override != "" else detect_pkg(dir)
+	if opt.db != "" {
+		schema.pkg_name = opt.pkg if opt.pkg != "" else detect_pkg(opt.dir)
 		ok: bool
 		switch driver_kind {
 		case .Sqlite:
-			ok = front_end_db(&schema, db_path)
+			ok = front_end_db(&schema, opt.db)
 		case .Postgres:
-			ok = front_end_db_postgres(&schema, db_path)
+			ok = front_end_db_postgres(&schema, opt.db)
 		}
-		if !ok {os.exit(1)}
+		if !ok {return 1}
 	} else {
-		if !front_end_structs(&schema) {os.exit(1)}
-		if pkg_override != "" {schema.pkg_name = pkg_override}
+		if !front_end_structs(&schema) {return 1}
+		if opt.pkg != "" {schema.pkg_name = opt.pkg}
 	}
 
-	out, _ := filepath.join({dir, "schema.gen.odin"}, context.allocator)
+	out, _ := filepath.join({opt.dir, "schema.gen.odin"}, context.allocator)
 
 	if len(schema.tables) == 0 {
-		if db_path != "" {
-			fmt.printfln("schemagen: no tables found in %s", db_path)
+		if opt.db != "" {
+			fmt.printfln("schemagen: no tables found in %s", opt.db)
 		} else {
-			fmt.printfln("schemagen: no `//%s` annotations found in %s", TABLE_ANNOTATION, dir)
+			fmt.printfln("schemagen: no `//%s` annotations found in %s", TABLE_ANNOTATION, opt.dir)
 		}
 		os.remove(out)
-		return
+		return 0
 	}
 
 	src := emit(&schema)
 	if werr := os.write_entire_file(out, transmute([]u8)src); werr != nil {
 		fmt.eprintfln("schemagen: write %s: %v", out, werr)
-		os.exit(1)
+		return 1
 	}
 
 	fmt.printfln("schemagen: wrote %s (%d table(s))", out, len(schema.tables))
+	return 0
+}
+
+main :: proc() {
+	os.exit(run(os.args[0], os.args[1:]))
 }

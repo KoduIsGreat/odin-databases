@@ -40,6 +40,7 @@
 package scangen
 
 import "base:runtime"
+import "core:flags"
 import "core:fmt"
 import "core:odin/ast"
 import "core:odin/parser"
@@ -287,38 +288,49 @@ emit_field_case :: proc(b: ^strings.Builder, f: ^Field_Spec) {
 
 // --- Driver ---
 
-main :: proc() {
-	if len(os.args) < 2 {
-		fmt.eprintln("usage: scangen <pkg-dir>")
-		os.exit(2)
-	}
-	dir := os.args[1]
+// Options is the scangen command line, parsed declaratively by core:flags.
+Options :: struct {
+	dir: string `args:"pos=0,required" usage:"package directory to scan for //+sql:scan structs (writes <dir>/scan.gen.odin)"`,
+}
 
-	pkg, ok := parser.parse_package_from_path(dir)
+// run parses args and generates the scanners, returning a process exit code.
+// `prog` is the program name shown in usage ("scangen" standalone, "odb scan"
+// under the unified CLI). Exposed so the `odb` dispatcher can call it.
+run :: proc(prog: string, args: []string) -> int {
+	opt: Options
+	program_args := make([]string, len(args) + 1, context.temp_allocator)
+	program_args[0] = prog
+	copy(program_args[1:], args)
+	flags.parse_or_exit(&opt, program_args) // handles -h / usage / errors
+
+	pkg, ok := parser.parse_package_from_path(opt.dir)
 	if !ok {
-		fmt.eprintfln("scangen: failed to parse package at %s", dir)
-		os.exit(1)
+		fmt.eprintfln("scangen: failed to parse package at %s", opt.dir)
+		return 1
 	}
 
-	spec := Pkg_Spec{dir = dir}
+	spec := Pkg_Spec{dir = opt.dir}
 	for _, file in pkg.files {
 		walk_file(&spec, file)
 	}
 
+	out, _ := filepath.join({opt.dir, "scan.gen.odin"}, context.allocator)
 	if len(spec.structs) == 0 {
-		fmt.printfln("scangen: no `%s` annotations found in %s", ANNOTATION, dir)
-		// Remove any stale generated file to avoid confusion.
-		out, _ := filepath.join({dir, "scan.gen.odin"}, context.allocator)
-		os.remove(out)
-		return
+		fmt.printfln("scangen: no `%s` annotations found in %s", ANNOTATION, opt.dir)
+		os.remove(out) // drop any stale generated file
+		return 0
 	}
 
-	out, _ := filepath.join({dir, "scan.gen.odin"}, context.allocator)
 	src := emit(&spec)
 	if werr := os.write_entire_file(out, transmute([]u8)src); werr != nil {
 		fmt.eprintfln("scangen: write %s: %v", out, werr)
-		os.exit(1)
+		return 1
 	}
 
 	fmt.printfln("scangen: wrote %s (%d struct(s))", out, len(spec.structs))
+	return 0
+}
+
+main :: proc() {
+	os.exit(run(os.args[0], os.args[1:]))
 }

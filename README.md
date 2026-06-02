@@ -191,6 +191,14 @@ optional `.down.sql`), where `<version>` is a 14-digit `YYYYMMDDHHMMSS`
 timestamp. You can also build the `[]migrate.Migration` slice by hand — the
 runner only needs the SQL strings.
 
+**Scaffold a new migration.** `migranew` writes an empty, correctly-named
+`<version>_<name>.up.sql` / `.down.sql` pair (fresh timestamp) into a directory:
+
+```sh
+just migrate-new migrations "create users"   # or: just odb migrate-new migrations "create users"
+# → migrations/20260102030405_create_users.up.sql (+ .down.sql)
+```
+
 **Embed instead of reading at runtime.** `migragen` bakes a directory of `.sql`
 files into a generated `migrations.gen.odin` (an embedded `[]migrate.Migration`),
 so the binary ships its migrations internally — no files to deploy:
@@ -247,6 +255,20 @@ just gen-all    # regenerate every committed *.gen.odin file
 
 All recipes pass `-collection:database=.` for you.
 
+The code generators are also exposed through a single **`odb`** CLI (built on
+`core:flags`), so each generator is a subcommand with its own `-h`:
+
+```sh
+just odb scan ./pkg                       # scangen
+just odb schema -db=app.db ./pkg          # schemagen (-driver=postgres for a DSN)
+just odb migrate-new ./migrations "name"  # migranew (scaffold a new migration)
+just odb migrate-gen ./migrations ./pkg   # migragen
+just odb schema -h                        # flags for a subcommand
+just odb-build                            # build a standalone bin/odb
+```
+
+(The individual `tools/<name>` binaries still build and run on their own.)
+
 ## Layout
 
 | Import | Path | What |
@@ -258,7 +280,8 @@ All recipes pass `-collection:database=.` for you.
 | `database:drivers/sqlite` | `drivers/sqlite/` | SQLite driver |
 | `database:drivers/postgres` | `drivers/postgres/` | pure-Odin PostgreSQL driver ([README](drivers/postgres/README.md)) |
 | `database:drivers/mock` | `drivers/mock/` | mock driver for tests |
-| — | `tools/{scangen,schemagen,migragen}/` | code generators |
+| — | `tools/{scangen,schemagen,migragen,migranew}/` | code generators + migration scaffolder |
+| — | `tools/odb/` | unified CLI (`odb <scan\|schema\|migrate-new\|migrate-gen>`) |
 | — | `bindings/sqlite/` | SQLite bindings + static lib |
 | — | `examples/` | runnable examples |
 
