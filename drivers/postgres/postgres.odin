@@ -4,9 +4,10 @@
 //
 // Status / scope (v1):
 //   - Authentication: trust, cleartext, MD5, and SCRAM-SHA-256 (the default).
-//   - TLS is NOT yet implemented — connect with sslmode=disable (or to a local
-//     / self-hosted server that allows plaintext). sslmode=require / verify-*
-//     return an error until an OpenSSL-backed transport is added.
+//   - TLS is opt-in at build time. The default build is plaintext-only (no C
+//     dependency); build with -define:DATABASE_PG_TLS=true (links OpenSSL) to
+//     enable sslmode=require (encrypt, no certificate verification). See
+//     tls.odin. verify-ca / verify-full (certificate checks) are not done yet.
 //   - Parameters and results use the TEXT wire format. `?` placeholders are
 //     translated to `$1, $2, ...`; native `$n` also works.
 //   - Streaming rows: values are decoded per-DataRow and borrow the connection
@@ -72,6 +73,12 @@ Pg_Conn :: struct {
 	last_error:   string, // owned; replaced per error, valid until the next one
 	stmt_counter: int,
 	tx_status:    u8, // last ReadyForQuery status ('I' idle, 'T' in tx, 'E' failed)
+
+	// TLS: non-nil once a handshake has happened, after which send_all/recv_exact
+	// route through tls_write/tls_read instead of the raw socket. Both are opaque
+	// (^SSL / ^SSL_CTX) so the struct compiles in non-TLS builds. See tls.odin.
+	tls:          rawptr,
+	tls_ctx:      rawptr,
 }
 
 @(private)
@@ -118,12 +125,7 @@ pg_open :: proc(
 	if !ok {
 		return nil, drv.Driver_Error{code = -1, message = msg}
 	}
-	if requires_tls(d.sslmode) {
-		return nil, drv.Driver_Error {
-			code = -1,
-			message = "postgres: sslmode requires TLS, which is not implemented yet — use sslmode=disable",
-		}
-	}
+	mode := tls_mode(d.sslmode)
 
 	conn := new(Pg_Conn, allocator)
 	conn.allocator = allocator
@@ -140,11 +142,57 @@ pg_open :: proc(
 	}
 	conn.socket = socket
 
+	// Negotiate TLS (if requested) before the StartupMessage.
+	if e := setup_tls(conn, mode, d.host); e != nil {
+		net.close(conn.socket)
+		return open_fail(conn), e
+	}
+
 	if e := pg_authenticate(conn, d.user, d.dbname, d.password); e != nil {
+		tls_close(conn) // SSL_shutdown/free if a handshake happened
 		net.close(conn.socket)
 		return open_fail(conn), e
 	}
 	return drv.Conn_Handle(conn), nil
+}
+
+// setup_tls negotiates and establishes TLS per the requested sslmode. It is a
+// no-op for `disable`, errors for require/verify-* when the build has no TLS
+// (or when verify-* is requested — not implemented yet), and otherwise sends
+// the SSLRequest and, if the server agrees, completes the handshake. `allow`
+// and `prefer` fall back to plaintext when TLS is unavailable or declined.
+@(private)
+setup_tls :: proc(conn: ^Pg_Conn, mode: TLS_Mode, host: string) -> drv.Error {
+	if mode == .Disable {return nil}
+	wants_tls := mode == .Require || mode == .Verify_Ca || mode == .Verify_Full
+
+	if !TLS_SUPPORTED {
+		if wants_tls {
+			return conn_errorf(
+				conn,
+				"postgres: sslmode=%v needs TLS — rebuild the postgres driver with -define:DATABASE_PG_TLS=true",
+				mode,
+			)
+		}
+		return nil // allow/prefer without TLS support → plaintext
+	}
+
+	if mode == .Verify_Ca || mode == .Verify_Full {
+		return conn_errorf(
+			conn,
+			"postgres: sslmode=%v (certificate verification) is not implemented yet — use sslmode=require",
+			mode,
+		)
+	}
+
+	offered := negotiate_ssl(conn) or_return
+	if !offered {
+		if mode == .Require {
+			return conn_errorf(conn, "postgres: server does not support SSL, but sslmode=require")
+		}
+		return nil // allow/prefer and the server declined → plaintext
+	}
+	return tls_handshake(conn, host, false)
 }
 
 // open_fail frees the connection's buffers and struct on a failed open. It
@@ -162,10 +210,12 @@ open_fail :: proc(conn: ^Pg_Conn) -> drv.Conn_Handle {
 @(private)
 pg_close_conn :: proc(handle: drv.Conn_Handle) -> drv.Error {
 	conn := cast(^Pg_Conn)handle
-	// Politely tell the server we're going away (best effort).
+	// Politely tell the server we're going away (best effort). Goes through TLS
+	// if active, so it must precede tls_close / net.close.
 	clear(&conn.wbuf)
 	build_terminate(&conn.wbuf)
 	send_all(conn, conn.wbuf[:])
+	tls_close(conn) // SSL_shutdown + free, before the socket is closed
 	net.close(conn.socket)
 
 	delete(conn.rbuf)
@@ -683,12 +733,35 @@ set_dsn_kv :: proc(d: ^Dsn, key, val: string) {
 }
 
 @(private)
-requires_tls :: proc(sslmode: string) -> bool {
+// TLS_Mode is the libpq sslmode ladder. `prefer` (the default) tries TLS and
+// falls back to plaintext; `require` insists on encryption but does not verify
+// the certificate; verify-ca/verify-full add certificate / hostname checks.
+TLS_Mode :: enum {
+	Disable,
+	Allow,
+	Prefer,
+	Require,
+	Verify_Ca,
+	Verify_Full,
+}
+
+@(private)
+tls_mode :: proc(sslmode: string) -> TLS_Mode {
 	switch sslmode {
-	case "require", "verify-ca", "verify-full":
-		return true
+	case "disable":
+		return .Disable
+	case "allow":
+		return .Allow
+	case "require":
+		return .Require
+	case "verify-ca":
+		return .Verify_Ca
+	case "verify-full":
+		return .Verify_Full
+	case "", "prefer":
+		return .Prefer
 	}
-	return false
+	return .Prefer
 }
 
 // --- Small helpers ---

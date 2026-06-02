@@ -49,7 +49,7 @@ run :: proc(prog: string, args: []string) -> int {
 	program_args := make([]string, len(args) + 1, context.temp_allocator)
 	program_args[0] = prog
 	copy(program_args[1:], args)
-	flags.parse_or_exit(&opt, program_args) // handles -h / usage / errors
+	flags.parse_or_exit(&opt, program_args, .Unix) // accepts `-flag value` and `-flag=value`; handles -h/usage/errors
 
 	migs, err := migrate.from_dir(opt.sql_dir)
 	if err != nil {

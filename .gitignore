@@ -4,6 +4,9 @@ bin/
 *.bin
 *.exe
 
+# `odin run tools/odb` drops an executable named after the package dir
+/odb
+
 # Binding/example build artifacts
 bindings/sqlite/example/example
 bindings/sqlite/example/main
@@ -17,6 +20,11 @@ bindings/sqlite/lib/darwin_amd64/
 # Local SQLite databases
 test_db
 *.db
+
+# Local connection secrets for the `ss` smoke program (.env.example is tracked)
+.env
+examples/ss/.env
+!examples/ss/.env.example
 
 # macOS
 .DS_Store

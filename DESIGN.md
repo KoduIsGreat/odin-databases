@@ -263,9 +263,15 @@ row, exactly like the SQLite driver does with `sqlite3_step`.
 - **Auth**: trust, cleartext, MD5, and SCRAM-SHA-256 (the modern default),
   built on `core:crypto` (`pbkdf2`/`hmac`/`sha2`) and `core:encoding/base64`.
   The server signature is verified before the connection is considered open.
-- **TLS is deferred.** v1 connects in plaintext (`sslmode=disable`); `require`/
-  `verify-*` return an error. TLS needs a transport `core` doesn't yet provide,
-  so it will arrive as an OpenSSL-backed layer (then native, once Odin ships TLS).
+- **TLS is opt-in at build time.** `core` ships no TLS, so the default build is
+  plaintext-only and pure-Odin (no C dependency); `require`/`verify-*` then error
+  with a "rebuild with TLS" message. Building with `-define:DATABASE_PG_TLS=true`
+  links OpenSSL (`tls.odin`) and enables `sslmode=require` — encrypt without
+  certificate verification. The whole wire surface funnels through `send_all`/
+  `recv_exact`, which switch to `SSL_read`/`SSL_write` once `conn.tls` is set
+  after the SSLRequest handshake, so nothing else in the driver changes. Cert
+  verification (`verify-ca`/`verify-full`) and client certs are still to come;
+  a native transport can replace OpenSSL once Odin ships TLS.
 - **Placeholders**: the rest of the toolkit (and `sqlbuilder`) emit `?`, but
   PostgreSQL wants `$1, $2, …`. The driver translates `?`→`$n`, skipping `?`
   inside string/identifier literals, dollar-quoted strings, and comments;

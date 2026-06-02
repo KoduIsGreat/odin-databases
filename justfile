@@ -10,6 +10,17 @@ set shell := ["bash", "-cu"]
 # Every odin command registers it (rooted at the repo, so no ../.. imports).
 coll := "-collection:database=."
 
+# Where `just install` puts the `odb` binary. Defaults to ~/.local/bin (no sudo,
+# on PATH for most shells). Override with `ODB_INSTALL_DIR` or `just install <dir>`.
+install_dir := env_var_or_default("ODB_INSTALL_DIR", env_var("HOME") / ".local" / "bin")
+
+# Flags that enable the PostgreSQL driver's TLS support (links OpenSSL). The
+# default build is plaintext-only and needs no OpenSSL. On macOS we add the
+# homebrew openssl lib path; on Linux libssl is usually on the default path.
+# Override the lib dir with OPENSSL_LIB_DIR.
+openssl_lib_dir := env_var_or_default("OPENSSL_LIB_DIR", if os() == "macos" { "/opt/homebrew/opt/openssl@3/lib" } else { "" })
+pg_tls_flags := "-define:DATABASE_PG_TLS=true" + if openssl_lib_dir != "" { " -extra-linker-flags:-L" + openssl_lib_dir } else { "" }
+
 # Default: list available recipes.
 default:
     @just --list
@@ -45,6 +56,7 @@ check-all:
     odin check examples/testing -no-entry-point {{coll}}
     odin check drivers/sqlite -no-entry-point {{coll}}
     odin check drivers/postgres -no-entry-point {{coll}}
+    odin check drivers/postgres -no-entry-point {{coll}} -define:DATABASE_PG_TLS=true
     odin check drivers/mock -no-entry-point {{coll}}
     odin check tools/scangen {{coll}}
     odin check tools/schemagen {{coll}}
@@ -77,6 +89,12 @@ test-pkg pkg:
 test-postgres dsn:
     ODIN_PG_TEST_DSN='{{dsn}}' odin test drivers/postgres {{coll}}
 
+# Same, but builds with TLS (OpenSSL) so the suite runs over an encrypted
+# connection — pass a sslmode=require DSN:
+#   just test-postgres-tls 'postgres://odin:secret@localhost:55432/odintest?sslmode=require'
+test-postgres-tls dsn:
+    ODIN_PG_TEST_DSN='{{dsn}}' odin test drivers/postgres {{coll}} {{pg_tls_flags}}
+
 # Start a throwaway PostgreSQL 17 container for `just test-postgres`
 # (user=odin, password=secret, db=odintest, host port 55432). Requires Docker.
 postgres-docker:
@@ -102,6 +120,13 @@ run-example name:
 test-example name:
     odin test examples/{{name}} {{coll}}
 
+# Smoke-test the generated `ss` postgres schema with a typed query-builder
+# SELECT. Reads connection settings from examples/ss/.env (copy the .env.example
+# first). Built with the TLS define so sslmode=require DSNs work too.
+run-ss:
+    mkdir -p bin
+    odin run examples/ss {{coll}} {{pg_tls_flags}} -out:bin/ss
+
 # --- Code generation ----------------------------------------------------------
 
 # Unified codegen CLI: dispatches to every generator as a subcommand, e.g.
@@ -114,7 +139,31 @@ odb *args:
 
 # Build the unified `odb` CLI to bin/odb (so it can be run without `odin run`).
 odb-build:
+    mkdir -p bin
     odin build tools/odb {{coll}} -out:bin/odb
+
+# Build `odb` with PostgreSQL TLS support (links OpenSSL) to bin/odb, so
+# `bin/odb schema -driver postgres -db '...sslmode=require'` can connect over TLS.
+odb-build-tls:
+    mkdir -p bin
+    odin build tools/odb {{coll}} {{pg_tls_flags}} -out:bin/odb
+
+# Build a release `odb` and install it onto your PATH.
+#   just install                 # → ~/.local/bin/odb  (or $ODB_INSTALL_DIR)
+#   just install /usr/local/bin  # explicit dir (may need: sudo just install ...)
+install dir=install_dir:
+    mkdir -p "{{dir}}"
+    odin build tools/odb {{coll}} -out:"{{dir}}/odb" -o:speed
+    @echo "installed odb -> {{dir}}/odb"
+    @case ":$PATH:" in \
+        *":{{dir}}:"*) ;; \
+        *) echo "note: {{dir}} is not on your PATH — add it, e.g. 'export PATH=\"{{dir}}:\$PATH\"'" ;; \
+    esac
+
+# Remove an installed odb (mirror of `just install`).
+uninstall dir=install_dir:
+    rm -f "{{dir}}/odb"
+    @echo "removed {{dir}}/odb"
 
 # Run scangen on a package directory (default: repo root).
 # Generates `<dir>/scan.gen.odin` for any struct tagged `//+sql:scan`.
@@ -139,6 +188,11 @@ schema-db db dir:
 #   just schema-db-postgres 'postgres://odin:secret@localhost:55432/odintest?sslmode=disable' ./myapp
 schema-db-postgres dsn dir:
     odin run tools/schemagen {{coll}} -- -driver=postgres -db={{dsn}} {{dir}}
+
+# Same, but over a TLS connection (sslmode=require). Builds the postgres driver
+# with OpenSSL. Use when your server only accepts encrypted connections.
+schema-db-postgres-tls dsn dir:
+    odin run tools/schemagen {{coll}} {{pg_tls_flags}} -- -driver=postgres -db={{dsn}} {{dir}}
 
 # Scaffold a new, empty migration pair (<version>_<name>.up.sql / .down.sql)
 # into <dir>, using a fresh YYYYMMDDHHMMSS timestamp.

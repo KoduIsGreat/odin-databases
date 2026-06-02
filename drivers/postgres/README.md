@@ -60,11 +60,39 @@ Both generators work with this driver:
   marks `Maybe(T)` for nullable columns. Run `scangen` after to get concrete
   scanners for the generated structs.
 
+## TLS
+
+TLS is **opt-in at build time**, so the default build stays pure-Odin with no C
+dependency. Build with `-define:DATABASE_PG_TLS=true` (which links OpenSSL —
+`libssl`/`libcrypto`) to enable encrypted connections:
+
+```sh
+# build the odb CLI with TLS, then introspect a TLS-only server:
+just odb-build-tls
+bin/odb schema -driver postgres -db 'postgres://user:pass@host:5432/db?sslmode=require' ./myapp
+# or directly: just schema-db-postgres-tls 'postgres://...?sslmode=require' ./myapp
+```
+
+On macOS the homebrew OpenSSL lib path is added automatically; override it with
+`OPENSSL_LIB_DIR=...`. To link OpenSSL in your own build, pass the same flags:
+`-define:DATABASE_PG_TLS=true -extra-linker-flags:-L/path/to/openssl/lib`.
+
+sslmode handling:
+
+| sslmode | default build | TLS build (`DATABASE_PG_TLS=true`) |
+|---|---|---|
+| `disable` | plaintext | plaintext |
+| `allow` / `prefer` | plaintext | try TLS, fall back to plaintext |
+| `require` | error (rebuild with TLS) | **encrypt** (no cert verification) |
+| `verify-ca` / `verify-full` | error | not implemented yet — use `require` |
+
+`require` encrypts but does **not** verify the server certificate (matching
+libpq's `require`). Certificate/hostname verification (`verify-ca`/`verify-full`)
+and client certificates are planned.
+
 ## Limitations (v1)
 
-- **No TLS yet.** Connect with `sslmode=disable` (or to a local / self-hosted
-  server that allows plaintext). `sslmode=require` / `verify-ca` / `verify-full`
-  return an error. A TLS transport (initially via OpenSSL bindings) is planned.
+- **TLS** is `require`-level only (see above) — no certificate verification yet.
 - **No last-insert id.** PostgreSQL doesn't report one without `RETURNING`, so
   `Result.last_insert_id` is always `0`. Use `RETURNING id` + `query_row`:
 

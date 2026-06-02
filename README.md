@@ -14,8 +14,8 @@ A database access toolkit for [Odin](https://odin-lang.org):
   column descriptors + row structs) driven by struct annotations *or* live
   database introspection.
 - **drivers** — a SQLite driver (JSON1/FTS5/R*Tree, loadable extensions), a
-  pure-Odin **PostgreSQL** driver (wire protocol, no libpq; SCRAM-SHA-256), and
-  an expectation-based **mock** driver for tests.
+  pure-Odin **PostgreSQL** driver (wire protocol, no libpq; SCRAM-SHA-256, with
+  opt-in TLS), and an expectation-based **mock** driver for tests.
 
 See [`DESIGN.md`](DESIGN.md) for the rationale behind each piece and
 [`examples/`](examples) for runnable, focused examples.
@@ -265,7 +265,11 @@ just odb migrate-new ./migrations "name"  # migranew (scaffold a new migration)
 just odb migrate-gen ./migrations ./pkg   # migragen
 just odb schema -h                        # flags for a subcommand
 just odb-build                            # build a standalone bin/odb
+just install                              # build + install odb to ~/.local/bin (on PATH)
 ```
+
+`just install [dir]` puts a release `odb` on your PATH (default `~/.local/bin`,
+or `$ODB_INSTALL_DIR`); `just uninstall [dir]` removes it.
 
 (The individual `tools/<name>` binaries still build and run on their own.)
 

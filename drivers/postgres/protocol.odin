@@ -84,9 +84,15 @@ pg_flush :: proc(conn: ^Pg_Conn) -> drv.Error {
 send_all :: proc(conn: ^Pg_Conn, data: []byte) -> drv.Error {
 	off := 0
 	for off < len(data) {
-		n, err := net.send_tcp(conn.socket, data[off:])
-		if err != nil {return conn_errorf(conn, "postgres: send failed: %v", err)}
-		off += n
+		if conn.tls != nil {
+			n, ok := tls_write(conn, data[off:])
+			if !ok {return conn_errorf(conn, "postgres: TLS write failed%s", tls_error())}
+			off += n
+		} else {
+			n, err := net.send_tcp(conn.socket, data[off:])
+			if err != nil {return conn_errorf(conn, "postgres: send failed: %v", err)}
+			off += n
+		}
 	}
 	return nil
 }
@@ -95,12 +101,36 @@ send_all :: proc(conn: ^Pg_Conn, data: []byte) -> drv.Error {
 recv_exact :: proc(conn: ^Pg_Conn, buf: []byte) -> drv.Error {
 	off := 0
 	for off < len(buf) {
-		n, err := net.recv_tcp(conn.socket, buf[off:])
-		if err != nil {return conn_errorf(conn, "postgres: recv failed: %v", err)}
-		if n == 0 {return conn_errorf(conn, "postgres: connection closed by server")}
-		off += n
+		if conn.tls != nil {
+			n, ok := tls_read(conn, buf[off:])
+			if !ok {
+				return conn_errorf(conn, "postgres: TLS read failed or connection closed%s", tls_error())
+			}
+			off += n
+		} else {
+			n, err := net.recv_tcp(conn.socket, buf[off:])
+			if err != nil {return conn_errorf(conn, "postgres: recv failed: %v", err)}
+			if n == 0 {return conn_errorf(conn, "postgres: connection closed by server")}
+			off += n
+		}
 	}
 	return nil
+}
+
+// negotiate_ssl performs the PostgreSQL SSLRequest handshake on the (still
+// plaintext) socket: it sends the 8-byte SSLRequest and reads the server's
+// single-byte reply. Returns true if the server is willing to do TLS ('S').
+@(private)
+negotiate_ssl :: proc(conn: ^Pg_Conn) -> (offered: bool, err: drv.Error) {
+	clear(&conn.wbuf)
+	put_i32(&conn.wbuf, 8) // message length (this field + the magic)
+	put_i32(&conn.wbuf, 80877103) // SSLRequest magic (1234 << 16 | 5679)
+	if e := send_all(conn, conn.wbuf[:]); e != nil {return false, e}
+	clear(&conn.wbuf)
+
+	resp: [1]u8
+	if e := recv_exact(conn, resp[:]); e != nil {return false, e}
+	return resp[0] == 'S', nil
 }
 
 // read_message reads one backend message. The returned payload borrows
