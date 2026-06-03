@@ -102,6 +102,7 @@ main :: proc() {
 	sb.init(&b)
 	defer sb.destroy(&b)
 
+
 	sb.select(&b, Studies.id, Studies.name, Studies.url, Studies.rate_limit)
 	sb.from(&b, Studies)
 	sb.where_(&b, sb.is_not_null(Studies.name))

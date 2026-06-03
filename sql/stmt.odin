@@ -71,7 +71,7 @@ stmt_query :: proc(stmt: ^Stmt, args: []Value) -> (Rows, Error) {
 
 // close_stmt finalizes the prepared statement.
 // Does NOT return the connection to the pool — the caller manages that.
-close_stmt :: proc(stmt: ^Stmt) -> Error {
+stmt_close :: proc(stmt: ^Stmt) -> Error {
 	if stmt.closed {return nil}
 	stmt.closed = true
 	return stmt.driver.stmt_close(stmt.handle)

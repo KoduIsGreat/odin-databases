@@ -154,7 +154,7 @@ main :: proc() {
 
 		stmt, perr := sql.prepare(&conn, "SELECT name, age FROM users WHERE age > ?")
 		if perr != nil {fmt.eprintfln("prepare: %v", perr);return}
-		defer sql.close_stmt(&stmt)
+		defer sql.stmt_close(&stmt)
 
 		srows, serr := sql.stmt_query(&stmt, {i64(26)})
 		if serr != nil {fmt.eprintfln("stmt_query: %v", serr);return}

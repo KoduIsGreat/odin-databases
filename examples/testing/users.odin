@@ -24,7 +24,7 @@ find_users_over :: proc(db: ^sql.DB, min_age: i64) -> ([dynamic]User, sql.Error)
 	if err != nil {
 		return out, err
 	}
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	for sql.next(&rows) {
 		u: User

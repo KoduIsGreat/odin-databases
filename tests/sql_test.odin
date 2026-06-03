@@ -10,9 +10,9 @@ import "core:testing"
 import "core:thread"
 import "core:time"
 
+import mock "database:drivers/mock"
 import sql "database:sql"
 import drv "database:sql/driver"
-import mock "database:drivers/mock"
 
 // --- error-row safety -------------------------------------------------------
 
@@ -108,7 +108,7 @@ test_pool_wait_timeout :: proc(t: ^testing.T) {
 	pe, is_pe := err2.(sql.Pool_Error)
 	testing.expect(t, is_pe && pe == .Timeout, "expected Pool_Error.Timeout")
 	testing.expect(t, elapsed >= time.Millisecond * 40, "timeout fired too early")
-	testing.expect(t, elapsed <  time.Millisecond * 500, "timeout fired suspiciously late")
+	testing.expect(t, elapsed < time.Millisecond * 500, "timeout fired suspiciously late")
 }
 
 // max_open=1, one holder, another waiter — releasing the conn should
@@ -133,7 +133,9 @@ test_pool_wait_wakes_on_release :: proc(t: ^testing.T) {
 	conn1, err1 := sql.checkout(db)
 	testing.expect_value(t, err1, nil)
 
-	probe := Wait_Probe{db = db}
+	probe := Wait_Probe {
+		db = db,
+	}
 	worker := thread.create_and_start_with_poly_data(&probe, proc(p: ^Wait_Probe) {
 		c, err := sql.checkout(p.db)
 		if err == nil {
@@ -174,15 +176,11 @@ test_many_columns :: proc(t: ^testing.T) {
 		row[i] = i64(i)
 	}
 
-	mock.returns_rows(
-		mock.expect_query(m, "SELECT"),
-		cols[:],
-		{row[:]},
-	)
+	mock.returns_rows(mock.expect_query(m, "SELECT"), cols[:], {row[:]})
 
 	rows, err := sql.query(db, "SELECT * FROM wide")
 	testing.expect_value(t, err, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	testing.expect(t, sql.next(&rows), "expected one row")
 	cols_out := sql.columns(&rows)
@@ -205,7 +203,7 @@ test_scan_integer_into_float :: proc(t: ^testing.T) {
 
 	rows, err := sql.query(db, "SELECT n FROM t")
 	testing.expect_value(t, err, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	testing.expect(t, sql.next(&rows), "expected a row")
 	r: Row
@@ -234,7 +232,7 @@ test_scan_maybe_fields :: proc(t: ^testing.T) {
 
 	rows, err := sql.query(db, "SELECT id, name, age FROM people")
 	testing.expect_value(t, err, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	testing.expect(t, sql.next(&rows), "expected one row")
 

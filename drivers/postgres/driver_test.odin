@@ -163,7 +163,7 @@ test_prepared_statement :: proc(t: ^testing.T) {
 	stmt, perr := sql.prepare(&conn, "SELECT ?::int * ?::int")
 	testing.expect_value(t, perr, nil)
 	if perr != nil {return}
-	defer sql.close_stmt(&stmt)
+	defer sql.stmt_close(&stmt)
 
 	rows, serr := sql.stmt_query(&stmt, {i64(6), i64(7)})
 	testing.expect_value(t, serr, nil)

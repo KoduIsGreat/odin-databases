@@ -35,7 +35,7 @@ seed :: proc(db: ^sql.DB) -> sql.Error {
 		sql.rollback(&tx)
 		return perr
 	}
-	defer sql.close_stmt(&stmt)
+	defer sql.stmt_close(&stmt)
 
 	now := time.now()
 	rows := [?][3]sql.Value {
