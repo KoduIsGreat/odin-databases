@@ -236,6 +236,36 @@ test_advisory_lock :: proc(t: ^testing.T) {
 	testing.expect_value(t, sql.advisory_unlock(&c2, KEY), nil)
 }
 
+// A result that fails partway through streaming must surface the error via
+// rows_err, not look like a clean end-of-rows. The query streams rows fine
+// until x=10, where 10-x = 0 triggers a division-by-zero ErrorResponse
+// mid-result.
+@(test)
+test_rows_err_mid_stream :: proc(t: ^testing.T) {
+	dsn, ok := test_dsn()
+	if !ok {return}
+
+	db, err := sql.open(&driver, dsn)
+	testing.expect_value(t, err, nil)
+	if err != nil {return}
+	defer sql.close(db)
+
+	rows, qerr := sql.query(db, "SELECT 1 / (10 - x) FROM generate_series(1, 20) AS x")
+	testing.expect_value(t, qerr, nil)
+	defer sql.close_rows(&rows)
+
+	n := 0
+	for sql.next(&rows) {
+		v: i64
+		_ = sql.scan(&rows, &v)
+		n += 1
+	}
+	// Rows 1..9 stream before the divide-by-zero at x=10.
+	testing.expect(t, n > 0, "expected rows to stream before the error")
+	// The loop stopped because of an error, not a clean end-of-rows.
+	testing.expect(t, sql.rows_err(&rows) != nil, "expected a mid-stream iteration error")
+}
+
 // try_lock runs pg_try_advisory_lock (non-blocking) on conn and returns whether
 // the lock was granted.
 @(private = "file")

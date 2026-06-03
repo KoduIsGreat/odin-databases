@@ -130,5 +130,12 @@ main :: proc() {
 		fmt.printfln("  id=%v  name=%q  url=%v  rate_limit=%v", s.id, s.name, url, rate)
 		n += 1
 	}
+	// next() returns false for BOTH a clean end-of-rows and a mid-stream failure
+	// (a dropped connection, a statement timeout, a server error on row N), so
+	// check rows_err afterward — otherwise a truncated result looks complete.
+	if rerr := sql.rows_err(&rows); rerr != nil {
+		fmt.eprintfln("result truncated mid-stream after %d row(s): %v", n, rerr)
+		os.exit(1)
+	}
 	fmt.printfln("%d row(s).", n)
 }

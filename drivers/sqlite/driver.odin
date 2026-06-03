@@ -26,6 +26,7 @@ driver := drv.Driver {
 	rows_columns = sqlite_rows_columns,
 	rows_next    = sqlite_rows_next,
 	rows_close   = sqlite_rows_close,
+	rows_err     = sqlite_rows_err,
 	begin        = sqlite_begin,
 	tx_commit    = sqlite_tx_commit,
 	tx_rollback  = sqlite_tx_rollback,
@@ -50,6 +51,7 @@ Sqlite_Rows :: struct {
 	cols:      []drv.Column, // borrowed names, allocated slice
 	owns_stmt: bool, // true = finalize on close, false = reset on close
 	done:      bool, // true = step already returned DONE
+	err:       drv.Error, // set when step() returns an error code (not ROW/DONE)
 }
 
 // --- Helpers ---
@@ -512,7 +514,15 @@ sqlite_rows_next :: proc(handle: drv.Rows_Handle, dest: []drv.Value) -> bool {
 	}
 
 	rows.done = true
+	if rc != sql3.DONE { 	// ROW handled above; anything else is an error
+		rows.err = make_error(rows.conn.db)
+	}
 	return false
+}
+
+@(private)
+sqlite_rows_err :: proc(handle: drv.Rows_Handle) -> drv.Error {
+	return (cast(^Sqlite_Rows)handle).err
 }
 
 @(private)

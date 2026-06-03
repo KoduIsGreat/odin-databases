@@ -55,6 +55,7 @@ driver := drv.Driver {
 	rows_columns = pg_rows_columns,
 	rows_next    = pg_rows_next,
 	rows_close   = pg_rows_close,
+	rows_err     = pg_rows_err,
 	begin        = pg_begin,
 	tx_commit    = pg_tx_commit,
 	tx_rollback  = pg_tx_rollback,
@@ -92,6 +93,7 @@ Pg_Rows :: struct {
 	conn: ^Pg_Conn,
 	cols: []drv.Column, // owned (names cloned out of the read buffer)
 	done: bool, // true once CommandComplete/ReadyForQuery seen
+	err:  drv.Error, // set on a mid-stream ErrorResponse or read failure
 }
 
 // --- Error helpers ---
@@ -435,6 +437,7 @@ pg_rows_next :: proc(handle: drv.Rows_Handle, dest: []drv.Value) -> bool {
 	for {
 		tag, payload, err := read_message(rows.conn)
 		if err != nil {
+			rows.err = err
 			rows.done = true
 			return false
 		}
@@ -452,6 +455,7 @@ pg_rows_next :: proc(handle: drv.Rows_Handle, dest: []drv.Value) -> bool {
 			return false
 		case 'E': // ErrorResponse mid-stream
 			parse_error_response(rows.conn, payload)
+			rows.err = drv.Driver_Error{code = -1, message = rows.conn.last_error}
 			rows.done = true
 			drain_to_ready(rows.conn)
 			return false
@@ -482,6 +486,10 @@ decode_data_row :: proc(rows: ^Pg_Rows, payload: []byte, dest: []drv.Value) {
 }
 
 @(private)
+pg_rows_err :: proc(handle: drv.Rows_Handle) -> drv.Error {
+	return (cast(^Pg_Rows)handle).err
+}
+
 pg_rows_close :: proc(handle: drv.Rows_Handle) -> drv.Error {
 	rows := cast(^Pg_Rows)handle
 	if !rows.done {

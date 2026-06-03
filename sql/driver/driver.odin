@@ -48,6 +48,12 @@ Driver :: struct {
 	rows_next:    proc(rows: Rows_Handle, dest: []Value) -> bool,
 	rows_close:   proc(rows: Rows_Handle) -> Error,
 
+	// rows_err reports an error that ended iteration early — a streaming I/O
+	// failure or a server-side error mid-result — as distinct from a clean
+	// end-of-rows. Returns nil when the result was fully consumed. May itself
+	// be nil for drivers that don't implement it (treated as "no error").
+	rows_err:     proc(rows: Rows_Handle) -> Error,
+
 	// Transactions
 	begin:        proc(conn: Conn_Handle, opts: Tx_Options) -> (Tx_Handle, Error),
 	tx_commit:    proc(tx: Tx_Handle) -> Error,

@@ -32,6 +32,7 @@ Rows :: struct {
 	created_at: time.Time, // used by pool_release to preserve max_lifetime
 	allocator:  mem.Allocator, // for _values / _cols
 	closed:     bool,
+	err:        Error, // set when next() stops; nil = clean EOF
 
 	// Current row state — filled by next()
 	col_count: int,
@@ -96,7 +97,21 @@ next :: proc(rows: ^Rows) -> bool {
 		}
 	}
 	rows.has_row = rows.driver.rows_next(rows.handle, rows._values)
+	if !rows.has_row && rows.driver.rows_err != nil {
+		rows.err = rows.driver.rows_err(rows.handle)
+	}
 	return rows.has_row
+}
+
+// rows_err returns the error that ended iteration early, or nil if the result
+// set was fully consumed. Check it AFTER the next() loop — like Go's
+// rows.Err() — because next() returns false for BOTH a clean end-of-rows and a
+// mid-stream failure, and the two are otherwise indistinguishable:
+//
+//   for sql.next(&rows) { ... }
+//   if err := sql.rows_err(&rows); err != nil { /* result was truncated */ }
+rows_err :: proc(rows: ^Rows) -> Error {
+	return rows.err
 }
 
 // close_rows closes the result set. If the Rows owns a connection
@@ -130,6 +145,10 @@ close_rows :: proc(rows: ^Rows) -> Error {
 	if rows.db != nil {
 		pool_release(rows.db, rows.conn, rows.created_at)
 	}
+	// A mid-stream iteration error is more useful than a close error, so it
+	// wins. Callers that consumed the loop without calling rows_err() still
+	// see it surfaced here.
+	if rows.err != nil {return rows.err}
 	return err
 }
 

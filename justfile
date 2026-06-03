@@ -52,6 +52,7 @@ check-all:
     odin check examples/quickstart {{coll}}
     odin check examples/query_builder {{coll}}
     odin check examples/introspection {{coll}}
+    odin check examples/ss {{coll}} -define:DATABASE_PG_TLS=true
     odin check examples/migrations {{coll}}
     odin check examples/testing -no-entry-point {{coll}}
     odin check drivers/sqlite -no-entry-point {{coll}}
