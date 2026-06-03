@@ -23,6 +23,7 @@ import "core:time"
 //       user: User
 //       sql.scan(&rows, &user)
 //   }
+//   if err := sql.rows_err(&rows); err != nil { /* iteration failed mid-stream */ }
 scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_struct(T) {
 	if !rows.has_row {
 		return Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}
@@ -76,6 +77,7 @@ scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_st
 //       age:  int
 //       sql.scan(&rows, &name, &age)
 //   }
+//   if err := sql.rows_err(&rows); err != nil { /* iteration failed mid-stream */ }
 scan_values :: proc(rows: ^Rows, dests: ..any) -> Error {
 	return scan_values_impl(rows, dests)
 }

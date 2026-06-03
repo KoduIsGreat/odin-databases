@@ -353,6 +353,12 @@ list_tables :: proc(db: ^sql.DB) -> ([dynamic]string, bool) {
 		if strings.has_prefix(name, "sqlite_") {continue} // skip internal tables
 		append(&out, strings.clone(name))
 	}
+	// A mid-stream failure would silently truncate the table list — and thus the
+	// generated schema. Treat it as a hard error rather than emitting a partial.
+	if rerr := sql.rows_err(&rows); rerr != nil {
+		fmt.eprintfln("schemagen: table_list: %v", rerr)
+		return out, false
+	}
 	slice.sort(out[:])
 	return out, true
 }
@@ -413,6 +419,11 @@ front_end_db :: proc(schema: ^Schema, db_path: string) -> bool {
 				Column_Spec{name = strings.clone(cname), odin_type = odin_type, nullable = nullable},
 			)
 		}
+		if rerr := sql.rows_err(&rows); rerr != nil {
+			fmt.eprintfln("schemagen: table_info(%q): %v", tname, rerr)
+			sql.close_rows(&rows)
+			return false
+		}
 		sql.close_rows(&rows)
 
 		append(&schema.tables, spec)
@@ -470,6 +481,11 @@ list_tables_pg :: proc(db: ^sql.DB) -> ([dynamic]string, bool) {
 		if s, ok := sql.row_value(&rows, 0).(string); ok {
 			append(&out, strings.clone(s))
 		}
+	}
+	// Don't emit a schema from a silently truncated table list.
+	if rerr := sql.rows_err(&rows); rerr != nil {
+		fmt.eprintfln("schemagen: list tables: %v", rerr)
+		return out, false
 	}
 	return out, true
 }
@@ -530,6 +546,11 @@ front_end_db_postgres :: proc(schema: ^Schema, dsn: string) -> bool {
 				&spec.columns,
 				Column_Spec{name = strings.clone(cname), odin_type = odin_type, nullable = nullable},
 			)
+		}
+		if rerr := sql.rows_err(&rows); rerr != nil {
+			fmt.eprintfln("schemagen: columns for %q: %v", tname, rerr)
+			sql.close_rows(&rows)
+			return false
 		}
 		sql.close_rows(&rows)
 

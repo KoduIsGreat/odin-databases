@@ -84,6 +84,10 @@ main :: proc() {
 				sc,
 			)
 		}
+		// next() returns false for both clean EOF and a mid-stream failure, so
+		// check rows_err after every loop — otherwise a truncated result reads
+		// as complete.
+		if rerr := sql.rows_err(&rows); rerr != nil {fmt.eprintfln("rows: %v", rerr);return}
 	}
 
 	// Build a query with the typed sqlbuilder. Column references
@@ -112,6 +116,7 @@ main :: proc() {
 			scan(&rows, &user)
 			fmt.printfln("  id=%v  name=%v  age=%v", user.id, user.name, user.age)
 		}
+		if rerr := sql.rows_err(&rows); rerr != nil {fmt.eprintfln("rows: %v", rerr);return}
 	}
 
 	// Scan with a partial struct (fewer fields than columns)
@@ -130,6 +135,7 @@ main :: proc() {
 			scan(&rows, &n)
 			fmt.printfln("  name=%v", n.name)
 		}
+		if rerr := sql.rows_err(&rows); rerr != nil {fmt.eprintfln("rows: %v", rerr);return}
 	}
 
 	// Scan with prepared statement
@@ -152,6 +158,7 @@ main :: proc() {
 			scan(&srows, &user)
 			fmt.printfln("  name=%v  age=%v", user.name, user.age)
 		}
+		if rerr := sql.rows_err(&srows); rerr != nil {fmt.eprintfln("rows: %v", rerr);return}
 	}
 
 	// Scan single row
@@ -181,6 +188,7 @@ main :: proc() {
 			scan(&rows, &name, &age)
 			fmt.printfln("  name=%v  age=%v", name, age)
 		}
+		if rerr := sql.rows_err(&rows); rerr != nil {fmt.eprintfln("rows: %v", rerr);return}
 	}
 
 	fmt.println("\n--- scan into struct fields ---")

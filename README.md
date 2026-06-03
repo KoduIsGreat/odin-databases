@@ -94,6 +94,10 @@ main :: proc() {
 		sql.scan(&rows, &u) // matches columns to fields by name
 		fmt.printfln("%v is %v", u.name, u.age)
 	}
+	// next() returns false for BOTH a clean end-of-rows and a mid-stream
+	// failure, so check rows_err afterward (like Go's rows.Err) — otherwise a
+	// truncated result looks complete.
+	if rerr := sql.rows_err(&rows); rerr != nil {fmt.eprintfln("rows: %v", rerr);return}
 }
 ```
 

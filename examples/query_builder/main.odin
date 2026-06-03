@@ -15,9 +15,9 @@ package query_builder
 
 import "core:fmt"
 
+import sqlite "database:drivers/sqlite"
 import sql "database:sql"
 import sb "database:sqlbuilder"
-import sqlite "database:drivers/sqlite"
 
 //+sql:scan
 //+sql:table users
@@ -106,6 +106,12 @@ main :: proc() {
 			scan(&rows, &u) // concrete scan_User from scangen
 			fmt.printfln("    id=%v  name=%v  age=%v", u.id, u.name, u.age)
 		}
+		// next() returns false for both clean EOF and a mid-stream failure;
+		// rows_err disambiguates them (nil = fully consumed).
+		if rerr := sql.rows_err(&rows); rerr != nil {
+			fmt.eprintfln("rows: %v", rerr)
+			return
+		}
 	}
 
 	// JOIN with a typed ON predicate (col_eq requires both sides share a type).
@@ -130,6 +136,10 @@ main :: proc() {
 			scan(&rows, &name, &title)
 			fmt.printfln("    %v: %q", name, title)
 		}
+		if rerr := sql.rows_err(&rows); rerr != nil {
+			fmt.eprintfln("rows: %v", rerr)
+			return
+		}
 	}
 
 	// UPDATE ... SET ... WHERE, then DELETE ... WHERE.
@@ -144,7 +154,10 @@ main :: proc() {
 			sb.where_(&b, sb.eq(Users.name, "Bob"))
 			q, args := sb.to_query(&b)
 			res, err := sql.exec(db, q, ..args)
-			if err != nil {fmt.eprintfln("update: %v", err);return}
+			if err != nil {
+				fmt.eprintfln("update: %v", err)
+				return
+			}
 			fmt.printfln("  updated %v row(s)", res.rows_affected)
 		}
 		{
@@ -155,7 +168,10 @@ main :: proc() {
 			sb.where_(&b, sb.lt(Users.age, 30))
 			q, args := sb.to_query(&b)
 			res, err := sql.exec(db, q, ..args)
-			if err != nil {fmt.eprintfln("delete: %v", err);return}
+			if err != nil {
+				fmt.eprintfln("delete: %v", err)
+				return
+			}
 			fmt.printfln("  deleted %v row(s)", res.rows_affected)
 		}
 	}

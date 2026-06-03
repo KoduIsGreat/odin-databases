@@ -24,6 +24,7 @@ import "core:time"
 //       user: User
 //       sql.scan(&rows, &user)
 //   }
+//   if err := sql.rows_err(&rows); err != nil { /* result truncated mid-stream */ }
 Rows :: struct {
 	db:         ^DB, // non-nil = owns the conn, release on close
 	conn:       Conn_Handle, // only used for pool release

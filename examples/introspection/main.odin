@@ -72,4 +72,10 @@ main :: proc() {
 			u.rating,
 		)
 	}
+	// next() returns false for both a clean end-of-rows and a mid-stream
+	// failure; rows_err disambiguates them (nil = fully consumed).
+	if rerr := sql.rows_err(&rows); rerr != nil {
+		fmt.eprintfln("rows: %v", rerr)
+		return
+	}
 }

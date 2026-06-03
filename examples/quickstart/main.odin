@@ -11,8 +11,8 @@ import "core:fmt"
 import vmem "core:mem/virtual"
 import "core:time"
 
-import sql "database:sql"
 import sqlite "database:drivers/sqlite"
+import sql "database:sql"
 
 User :: struct {
 	id:         i64,
@@ -38,7 +38,11 @@ seed :: proc(db: ^sql.DB) -> sql.Error {
 	defer sql.close_stmt(&stmt)
 
 	now := time.now()
-	rows := [?][3]sql.Value{{"Alice", i64(30), now}, {"Bob", i64(25), now}, {"Carol", i64(41), now}}
+	rows := [?][3]sql.Value {
+		{"Alice", i64(30), now},
+		{"Bob", i64(25), now},
+		{"Carol", i64(41), now},
+	}
 	for &r in rows {
 		if _, err := sql.stmt_exec(&stmt, r[:]); err != nil {
 			sql.rollback(&tx)
@@ -102,6 +106,12 @@ main :: proc() {
 			}
 			fmt.printfln("  id=%v  name=%v  age=%v", u.id, u.name, u.age)
 		}
+		// next() returns false for both a clean end-of-rows and a mid-stream
+		// failure, so check rows_err afterward (nil = fully consumed).
+		if rerr := sql.rows_err(&rows); rerr != nil {
+			fmt.eprintfln("rows: %v", rerr)
+			return
+		}
 	}
 
 	// query + positional scan: bind columns to variables in column order.
@@ -122,6 +132,11 @@ main :: proc() {
 				return
 			}
 			fmt.printfln("  %v (%v)", name, age)
+		}
+
+		if rerr := sql.rows_err(&rows); rerr != nil {
+			fmt.eprintfln("rows err: %v", rerr)
+			return
 		}
 	}
 }

@@ -212,6 +212,9 @@ status :: proc(
 		if e := sql.scan(&rows, &v, &at); e != nil {return nil, e}
 		applied[v] = at
 	}
+	// next() stops on both clean EOF and a mid-stream failure; a truncated read
+	// here would make us treat already-applied migrations as pending.
+	if e := sql.rows_err(&rows); e != nil {return nil, e}
 
 	sorted := validated(migrations) or_return
 	res := make([dynamic]Status, 0, len(sorted), allocator)
@@ -299,6 +302,10 @@ applied_versions :: proc(
 			return nil, e
 		}
 		append(&list, v)
+	}
+	if e := sql.rows_err(&rows); e != nil {
+		delete(list)
+		return nil, e
 	}
 	return list[:], nil
 }

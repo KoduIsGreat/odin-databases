@@ -27,7 +27,7 @@ then `import "database:sql"`.
 sql/                  — package sql (DB, Conn, Rows, Row, Stmt, Tx, scan)
   db.odin             — DB (pool + API), open/close, overload sets, pool internals
   conn.odin           — Conn, checkout, checkin
-  rows.odin           — Rows, next, columns, close_rows, codegen accessors
+  rows.odin           — Rows, next, columns, rows_err, close_rows, codegen accessors
   query_row.odin      — Row, query_row, close_row (error-safe)
   stmt.odin           — Stmt, prepare, stmt_exec, stmt_query, close_stmt
   tx.odin             — Tx, begin, commit, rollback (closes conn on error)
@@ -128,6 +128,36 @@ This matches what underlying C libraries actually do (SQLite's
 `sqlite3_column_text` returns a pointer valid until step/finalize). Zero
 allocations on the read hot path beyond the per-Rows column buffer (allocated
 lazily on the first `next()`).
+
+### Iteration errors (`rows_err`)
+
+`next()` returns a bare `bool`, so — exactly like Go's `rows.Next()` — it
+collapses two outcomes into one `false`: a clean end-of-rows, and a failure that
+ended iteration early (a dropped connection, a statement timeout, a server-side
+error on row *N*). To tell them apart, call `rows_err(&rows)` after the loop; it
+returns the error that stopped iteration, or `nil` if the result drained fully.
+
+```odin
+for sql.next(&rows) { ... }
+if err := sql.rows_err(&rows); err != nil { /* result was truncated */ }
+```
+
+A mid-stream error is **terminal**: the driver sets `done` and `next()` returns
+`false`, so there are no further rows to "skip past" and lose the error. The
+driver stashes the error on its rows handle (`pg_rows.err` / `sqlite_rows.err`);
+`next()` captures it into `Rows.err` the moment iteration stops, and nothing ever
+clears it. The driver contract is one extra vtable proc, `rows_err(handle) ->
+Error` — nil-guarded in `next()`, so a driver that doesn't implement it (e.g.
+`mock`) simply reports "no error". As a backstop, `close_rows()` returns
+`Rows.err` in preference to any close error, so even a caller that only
+`defer`s `close_rows` and checks its return won't silently drop a truncated read.
+
+The error *message* is borrowed under the same rules as row values (postgres
+`conn.last_error`, SQLite `errmsg` — valid until the next op on that connection),
+so read or copy it before issuing another query on the same conn.
+
+Single-row reads don't need this: `query_row` calls `next` once and surfaces any
+error through `Row.err` at `scan` time (see below).
 
 ### `query_row` and `Row`
 

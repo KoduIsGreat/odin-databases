@@ -33,5 +33,11 @@ find_users_over :: proc(db: ^sql.DB, min_age: i64) -> ([dynamic]User, sql.Error)
 		}
 		append(&out, u)
 	}
+	// next() returns false for both a clean end-of-rows and a failure that ended
+	// iteration early. Surface the latter rather than returning a silently
+	// truncated result.
+	if rerr := sql.rows_err(&rows); rerr != nil {
+		return out, rerr
+	}
 	return out, nil
 }
