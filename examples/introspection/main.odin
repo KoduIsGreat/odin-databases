@@ -11,9 +11,9 @@ package introspection
 
 import "core:fmt"
 
+import sqlite "database:drivers/sqlite"
 import sql "database:sql"
 import sb "database:sqlbuilder"
-import sqlite "database:drivers/sqlite"
 
 main :: proc() {
 	db, err := sql.open(&sqlite.driver, ":memory:")
@@ -53,11 +53,11 @@ main :: proc() {
 
 	rows, qerr := sql.query(db, q, ..args)
 	if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	for sql.next(&rows) {
 		u: User // the introspected row struct (singular name)
-		if serr := scan(&rows, &u); serr != nil { // concrete scanner from scangen
+		if serr := scan(&rows, &u); serr != nil { 	// concrete scanner from scangen
 			fmt.eprintfln("scan: %v", serr)
 			return
 		}

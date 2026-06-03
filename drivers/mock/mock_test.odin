@@ -30,11 +30,11 @@ test_query_with_canned_rows :: proc(t: ^testing.T) {
 
 	rows, err := sql.query(db, "SELECT id, name, age FROM users WHERE age > ?", i64(0))
 	testing.expect_value(t, err, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	got: [dynamic]User
 	defer {
-		for u in got {delete(u.name)} // sql.scan cloned strings into context.allocator
+		for u in got {delete(u.name)} 	// sql.scan cloned strings into context.allocator
 		delete(got)
 	}
 
@@ -66,12 +66,15 @@ test_returns_structs :: proc(t: ^testing.T) {
 	// None field standing in for SQL NULL.
 	returns_structs(
 		expect_query(mock, "SELECT"),
-		[]Account{{id = 1, name = "alice", email = "alice@x.com"}, {id = 2, name = "bob", email = nil}},
+		[]Account {
+			{id = 1, name = "alice", email = "alice@x.com"},
+			{id = 2, name = "bob", email = nil},
+		},
 	)
 
 	rows, err := sql.query(db, "SELECT id, name, email FROM accounts")
 	testing.expect_value(t, err, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	got: [dynamic]Account
 	defer {
@@ -103,12 +106,15 @@ test_fixtures_are_deep_cloned :: proc(t: ^testing.T) {
 	// Register a fixture whose string aliases a local buffer, then mutate the
 	// buffer. The mock must have copied the bytes, so the row still reads "Alice".
 	buf := [5]u8{'A', 'l', 'i', 'c', 'e'}
-	returns_structs(expect_query(mock, "SELECT"), []User{{id = 1, name = string(buf[:]), age = 30}})
+	returns_structs(
+		expect_query(mock, "SELECT"),
+		[]User{{id = 1, name = string(buf[:]), age = 30}},
+	)
 	buf[0] = 'X'
 
 	rows, err := sql.query(db, "SELECT id, name, age FROM users")
 	testing.expect_value(t, err, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	testing.expect(t, sql.next(&rows), "expected a row")
 	u: User
@@ -174,13 +180,10 @@ test_struct_args :: proc(t: ^testing.T) {
 	defer close(mock, db)
 
 	// Type-safe exact-args match — no Args_Predicate closure, no Value wrapping.
-	with_struct_args(
-		returns_result(expect_exec(mock, "UPDATE"), rows_affected = 1),
-		struct {
-			name: string,
-			id:   i64,
-		}{"frank", 7},
-	)
+	with_struct_args(returns_result(expect_exec(mock, "UPDATE"), rows_affected = 1), struct {
+		name: string,
+		id:   i64,
+	}{"frank", 7})
 
 	_, err := sql.exec(db, "UPDATE users SET name=? WHERE id=?", "frank", i64(7))
 	testing.expect_value(t, err, nil)
@@ -224,13 +227,10 @@ test_struct_args_mismatch_errors :: proc(t: ^testing.T) {
 	mock, db := open()
 	defer close(mock, db)
 
-	with_struct_args(
-		expect_exec(mock, "UPDATE"),
-		struct {
-			name: string,
-			id:   i64,
-		}{"frank", 7},
-	)
+	with_struct_args(expect_exec(mock, "UPDATE"), struct {
+		name: string,
+		id:   i64,
+	}{"frank", 7})
 
 	// Wrong id → args mismatch → the call is rejected (expectation unconsumed).
 	_, err := sql.exec(db, "UPDATE users SET name=? WHERE id=?", "frank", i64(99))

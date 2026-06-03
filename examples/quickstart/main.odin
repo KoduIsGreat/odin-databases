@@ -96,7 +96,7 @@ main :: proc() {
 			fmt.eprintfln("query: %v", err)
 			return
 		}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		for sql.next(&rows) {
 			u: User
@@ -122,7 +122,7 @@ main :: proc() {
 			fmt.eprintfln("query: %v", err)
 			return
 		}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		for sql.next(&rows) {
 			name: string

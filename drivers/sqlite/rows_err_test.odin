@@ -17,7 +17,7 @@ test_rows_err_mid_stream :: proc(t: ^testing.T) {
 
 	rows, qerr := sql.query(db, "SELECT 1 UNION ALL SELECT abs(-9223372036854775808)")
 	testing.expect_value(t, qerr, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	n := 0
 	for sql.next(&rows) {
@@ -42,7 +42,7 @@ test_rows_err_nil_on_clean_eof :: proc(t: ^testing.T) {
 
 	rows, qerr := sql.query(db, "SELECT 1 UNION ALL SELECT 2")
 	testing.expect_value(t, qerr, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	n := 0
 	for sql.next(&rows) {

@@ -36,11 +36,11 @@ Rows :: struct {
 	err:        Error, // set when next() stops; nil = clean EOF
 
 	// Current row state — filled by next()
-	col_count: int,
-	has_row:   bool,
-	_detached: bool, // true = values are owned, scan should not clone
-	_values:   []Value,
-	_cols:     []Column, // cached on first next()
+	col_count:  int,
+	has_row:    bool,
+	_detached:  bool, // true = values are owned, scan should not clone
+	_values:    []Value,
+	_cols:      []Column, // cached on first next()
 }
 
 // Row holds the result of query_row(). The first row is already
@@ -118,7 +118,7 @@ rows_err :: proc(rows: ^Rows) -> Error {
 // close_rows closes the result set. If the Rows owns a connection
 // (from a convenience db query), it is returned to the pool. Safe to
 // call multiple times.
-close_rows :: proc(rows: ^Rows) -> Error {
+rows_close :: proc(rows: ^Rows) -> Error {
 	if rows.closed {return nil}
 	rows.closed = true
 	rows.has_row = false

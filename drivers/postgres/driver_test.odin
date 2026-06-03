@@ -78,11 +78,11 @@ test_connect_and_roundtrip :: proc(t: ^testing.T) {
 	// Streaming query + struct scan.
 	rows, qerr := sql.query(db, "SELECT id, label, weight, ok FROM odin_pg_test ORDER BY id")
 	testing.expect_value(t, qerr, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	got: [dynamic]Row
 	defer delete(got)
-	defer for r in got {delete(r.label)} // scan clones strings into context.allocator
+	defer for r in got {delete(r.label)} 	// scan clones strings into context.allocator
 	for sql.next(&rows) {
 		r: Row
 		serr := sql.scan(&rows, &r)
@@ -113,7 +113,7 @@ test_params_and_null :: proc(t: ^testing.T) {
 	{
 		rows, qerr := sql.query(db, "SELECT ?::bigint + ?::bigint", i64(40), i64(2))
 		testing.expect_value(t, qerr, nil)
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 		sum: i64 = -1
 		if sql.next(&rows) {testing.expect_value(t, sql.scan(&rows, &sum), nil)}
 		testing.expect_value(t, sum, 42)
@@ -126,7 +126,7 @@ test_params_and_null :: proc(t: ^testing.T) {
 		}
 		rows, qerr := sql.query(db, "SELECT NULL::bigint AS v")
 		testing.expect_value(t, qerr, nil)
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 		o: Opt
 		if sql.next(&rows) {testing.expect_value(t, sql.scan(&rows, &o), nil)}
 		_, present := o.v.?
@@ -167,7 +167,7 @@ test_prepared_statement :: proc(t: ^testing.T) {
 
 	rows, serr := sql.stmt_query(&stmt, {i64(6), i64(7)})
 	testing.expect_value(t, serr, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 	product: i64
 	if sql.next(&rows) {testing.expect_value(t, sql.scan(&rows, &product), nil)}
 	testing.expect_value(t, product, 42)
@@ -196,7 +196,7 @@ test_transaction_rollback :: proc(t: ^testing.T) {
 
 	rows, qerr := sql.query(db, "SELECT count(*) FROM odin_pg_tx")
 	testing.expect_value(t, qerr, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 	n: i64 = -1
 	if sql.next(&rows) {testing.expect_value(t, sql.scan(&rows, &n), nil)}
 	testing.expect_value(t, n, 0)
@@ -252,7 +252,7 @@ test_rows_err_mid_stream :: proc(t: ^testing.T) {
 
 	rows, qerr := sql.query(db, "SELECT 1 / (10 - x) FROM generate_series(1, 20) AS x")
 	testing.expect_value(t, qerr, nil)
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	n := 0
 	for sql.next(&rows) {

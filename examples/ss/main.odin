@@ -116,7 +116,7 @@ main :: proc() {
 		fmt.eprintfln("query: %v", qerr)
 		os.exit(1)
 	}
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	n := 0
 	for sql.next(&rows) {

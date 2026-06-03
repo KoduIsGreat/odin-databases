@@ -64,7 +64,7 @@ main :: proc() {
 	{
 		rows, qerr := sql.query(db, "SELECT id, name, age, created_at FROM users")
 		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		for sql.next(&rows) {
 			user: User
@@ -110,7 +110,7 @@ main :: proc() {
 
 		rows, qerr := sql.query(db, q, ..args)
 		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		for sql.next(&rows) {
 			user: User
@@ -132,7 +132,7 @@ main :: proc() {
 
 		rows, qerr := sql.query(db, "SELECT id, name, age FROM users")
 		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		for sql.next(&rows) {
 			n: NameOnly
@@ -158,7 +158,7 @@ main :: proc() {
 
 		srows, serr := sql.stmt_query(&stmt, {i64(26)})
 		if serr != nil {fmt.eprintfln("stmt_query: %v", serr);return}
-		defer sql.close_rows(&srows)
+		defer sql.rows_close(&srows)
 
 		for sql.next(&srows) {
 			user: User
@@ -176,7 +176,7 @@ main :: proc() {
 	{
 		rows, qerr := sql.query(db, "SELECT name, age FROM users WHERE id = ?", i64(1))
 		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		if sql.next(&rows) {
 			user: User
@@ -190,7 +190,7 @@ main :: proc() {
 	{
 		rows, qerr := sql.query(db, "SELECT name, age FROM users")
 		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		for sql.next(&rows) {
 			name: string
@@ -208,7 +208,7 @@ main :: proc() {
 	{
 		rows, qerr := sql.query(db, "SELECT id, name, age, created_at FROM users")
 		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		if sql.next(&rows) {
 			user: User
@@ -228,7 +228,7 @@ main :: proc() {
 	{
 		rows, qerr := sql.query(db, "SELECT count(*) FROM users")
 		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		if sql.next(&rows) {
 			total: i64
@@ -262,12 +262,12 @@ main :: proc() {
 			fmt.eprintfln("tx insert: %v", err)
 			return
 		}
-		sql.commit(&tx) or_return
+		sql.commit(&tx)
 	}
 	{
 		rows, qerr := sql.query(db, "SELECT count(*) as total FROM users")
 		if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 
 		Count :: struct {
 			total: i64,

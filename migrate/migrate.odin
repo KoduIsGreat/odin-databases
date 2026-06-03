@@ -54,7 +54,7 @@ LOCK_KEY :: i64(0x6F64696E5F6D6967)
 // may contain multiple `;`-separated statements. A `down` of "" marks the
 // migration irreversible — rolling back past it returns a .Irreversible error.
 Migration :: struct {
-	version: i64,    // ordering key; by convention a YYYYMMDDHHMMSS timestamp
+	version: i64, // ordering key; by convention a YYYYMMDDHHMMSS timestamp
 	name:    string, // human-readable label (from the filename, in from_dir)
 	up:      string, // SQL to apply
 	down:    string, // SQL to revert; "" = irreversible
@@ -76,17 +76,17 @@ Error :: union {
 }
 
 Migrate_Error_Kind :: enum {
-	Bad_Filename,      // a file name didn't match <version>_<name>.(up|down).sql
+	Bad_Filename, // a file name didn't match <version>_<name>.(up|down).sql
 	Duplicate_Version, // two migrations share the same version
-	Missing_Up,        // a .down.sql with no matching .up.sql
-	Irreversible,      // tried to roll back a migration whose down is ""
-	Unknown_Version,   // a target/applied version isn't among the migrations given
-	Read_Failed,       // directory listing or file read failed (from_dir)
+	Missing_Up, // a .down.sql with no matching .up.sql
+	Irreversible, // tried to roll back a migration whose down is ""
+	Unknown_Version, // a target/applied version isn't among the migrations given
+	Read_Failed, // directory listing or file read failed (from_dir)
 }
 
 Migrate_Error :: struct {
 	kind:    Migrate_Error_Kind,
-	version: i64,    // the offending version, when applicable
+	version: i64, // the offending version, when applicable
 	detail:  string, // extra context (a filename, a name, an OS error)
 }
 
@@ -205,7 +205,7 @@ status :: proc(
 
 	applied := make(map[i64]time.Time, allocator = context.temp_allocator)
 	rows := sql.query(&conn, "SELECT version, applied_at FROM " + MIGRATIONS_TABLE) or_return
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 	for sql.next(&rows) {
 		v: i64
 		at: time.Time
@@ -292,8 +292,11 @@ applied_versions :: proc(
 	versions: []i64,
 	err: Error,
 ) {
-	rows := sql.query(conn, "SELECT version FROM " + MIGRATIONS_TABLE + " ORDER BY version") or_return
-	defer sql.close_rows(&rows)
+	rows := sql.query(
+		conn,
+		"SELECT version FROM " + MIGRATIONS_TABLE + " ORDER BY version",
+	) or_return
+	defer sql.rows_close(&rows)
 	list := make([dynamic]i64, allocator)
 	for sql.next(&rows) {
 		v: i64
@@ -341,11 +344,8 @@ revert_one :: proc(conn: ^sql.Conn, m: Migration) -> Error {
 		sql.rollback(&tx)
 		return e
 	}
-	if _, e := sql.exec(
-		&tx,
-		"DELETE FROM " + MIGRATIONS_TABLE + " WHERE version = ?",
-		m.version,
-	); e != nil {
+	if _, e := sql.exec(&tx, "DELETE FROM " + MIGRATIONS_TABLE + " WHERE version = ?", m.version);
+	   e != nil {
 		sql.rollback(&tx)
 		return e
 	}

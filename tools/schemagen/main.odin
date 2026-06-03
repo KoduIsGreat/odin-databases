@@ -55,9 +55,9 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 
-import sql "database:sql"
 import postgres "database:drivers/postgres"
 import sqlite "database:drivers/sqlite"
+import sql "database:sql"
 
 // --- Internal schema model (the front-end ⇄ emit seam) ---
 
@@ -168,10 +168,23 @@ unwrap_maybe :: proc(t: string) -> (inner: string, is_maybe: bool) {
 // is_supported mirrors the scan layer's supported set (struct front-end).
 is_supported :: proc(t: string) -> bool {
 	switch t {
-	case "i64", "i32", "i16", "i8", "int",
-	     "u64", "u32", "u16", "u8", "uint",
-	     "f64", "f32", "bool", "string",
-	     "[]byte", "[]u8", "time.Time":
+	case "i64",
+	     "i32",
+	     "i16",
+	     "i8",
+	     "int",
+	     "u64",
+	     "u32",
+	     "u16",
+	     "u8",
+	     "uint",
+	     "f64",
+	     "f32",
+	     "bool",
+	     "string",
+	     "[]byte",
+	     "[]u8",
+	     "time.Time":
 		return true
 	}
 	return false
@@ -203,7 +216,12 @@ source_of :: proc(file: ^ast.File, node: ^ast.Node) -> string {
 	return file.src[node.pos.offset:node.end.offset]
 }
 
-collect_struct :: proc(schema: ^Schema, file: ^ast.File, table_name: string, st: ^ast.Struct_Type) {
+collect_struct :: proc(
+	schema: ^Schema,
+	file: ^ast.File,
+	table_name: string,
+	st: ^ast.Struct_Type,
+) {
 	spec := Table_Spec {
 		name     = table_name,
 		accessor = pascal_case(table_name),
@@ -215,7 +233,7 @@ collect_struct :: proc(schema: ^Schema, file: ^ast.File, table_name: string, st:
 			// A Maybe(T) field marks the column nullable; the descriptor's
 			// Column(T) uses the base type T.
 			base, nullable := unwrap_maybe(strings.trim_space(source_of(file, f.type)))
-			if !is_supported(base) {continue} // keep the descriptor compilable
+			if !is_supported(base) {continue} 	// keep the descriptor compilable
 			if base == "time.Time" {schema.uses_time = true}
 			for n in f.names {
 				ident, ok := n.derived.(^ast.Ident)
@@ -334,7 +352,7 @@ list_tables :: proc(db: ^sql.DB) -> ([dynamic]string, bool) {
 		fmt.eprintfln("schemagen: PRAGMA table_list: %v", qerr)
 		return out, false
 	}
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	for sql.next(&rows) {
 		name, schema, ttype: string
@@ -348,9 +366,9 @@ list_tables :: proc(db: ^sql.DB) -> ([dynamic]string, bool) {
 				if s, ok := sql.row_value(&rows, ci).(string); ok {ttype = s}
 			}
 		}
-		if schema != "main" {continue} // skip temp / attached schemas
-		if ttype != "table" && ttype != "virtual" {continue} // skip views, shadow tables
-		if strings.has_prefix(name, "sqlite_") {continue} // skip internal tables
+		if schema != "main" {continue} 	// skip temp / attached schemas
+		if ttype != "table" && ttype != "virtual" {continue} 	// skip views, shadow tables
+		if strings.has_prefix(name, "sqlite_") {continue} 	// skip internal tables
 		append(&out, strings.clone(name))
 	}
 	// A mid-stream failure would silently truncate the table list — and thus the
@@ -416,15 +434,19 @@ front_end_db :: proc(schema: ^Schema, db_path: string) -> bool {
 			nullable := notnull == 0 && pk == 0
 			append(
 				&spec.columns,
-				Column_Spec{name = strings.clone(cname), odin_type = odin_type, nullable = nullable},
+				Column_Spec {
+					name = strings.clone(cname),
+					odin_type = odin_type,
+					nullable = nullable,
+				},
 			)
 		}
 		if rerr := sql.rows_err(&rows); rerr != nil {
 			fmt.eprintfln("schemagen: table_info(%q): %v", tname, rerr)
-			sql.close_rows(&rows)
+			sql.rows_close(&rows)
 			return false
 		}
-		sql.close_rows(&rows)
+		sql.rows_close(&rows)
 
 		append(&schema.tables, spec)
 	}
@@ -475,7 +497,7 @@ list_tables_pg :: proc(db: ^sql.DB) -> ([dynamic]string, bool) {
 		fmt.eprintfln("schemagen: list tables: %v", qerr)
 		return out, false
 	}
-	defer sql.close_rows(&rows)
+	defer sql.rows_close(&rows)
 
 	for sql.next(&rows) {
 		if s, ok := sql.row_value(&rows, 0).(string); ok {
@@ -544,15 +566,19 @@ front_end_db_postgres :: proc(schema: ^Schema, dsn: string) -> bool {
 			nullable := is_nullable == "YES"
 			append(
 				&spec.columns,
-				Column_Spec{name = strings.clone(cname), odin_type = odin_type, nullable = nullable},
+				Column_Spec {
+					name = strings.clone(cname),
+					odin_type = odin_type,
+					nullable = nullable,
+				},
 			)
 		}
 		if rerr := sql.rows_err(&rows); rerr != nil {
 			fmt.eprintfln("schemagen: columns for %q: %v", tname, rerr)
-			sql.close_rows(&rows)
+			sql.rows_close(&rows)
 			return false
 		}
-		sql.close_rows(&rows)
+		sql.rows_close(&rows)
 
 		append(&schema.tables, spec)
 	}
@@ -616,7 +642,17 @@ emit_table :: proc(b: ^strings.Builder, tbl: ^Table_Spec) {
 	// Struct literal value.
 	ws(b, "\t_info = {name = \"", tbl.name, "\"},\n")
 	for col in tbl.columns {
-		ws(b, "\t", col.name, " = {base = {table = \"", tbl.name, "\", name = \"", col.name, "\", type_id = ", col.odin_type)
+		ws(
+			b,
+			"\t",
+			col.name,
+			" = {base = {table = \"",
+			tbl.name,
+			"\", name = \"",
+			col.name,
+			"\", type_id = ",
+			col.odin_type,
+		)
 		if col.nullable {ws(b, ", nullable = true")}
 		ws(b, "}},\n")
 	}
@@ -641,11 +677,16 @@ detect_pkg :: proc(dir: string) -> string {
 // `driver` and `structs` are validated by hand (not enum-parsed) to keep the
 // lowercase `-driver=postgres` / `-structs=none` spellings exactly.
 Options :: struct {
-	dir:    string `args:"pos=0,required" usage:"package directory to write schema.gen.odin into"`,
-	db:     string `args:"name=db"        usage:"introspect this database instead of structs (SQLite file path, or a DSN with -driver=postgres)"`,
-	driver: string `args:"name=driver"    usage:"DB driver for -db: sqlite (default) or postgres"`,
-	pkg:    string `args:"name=package"   usage:"override the generated package name"`,
-	structs: string `args:"name=structs"  usage:"DB-mode row structs: singular (default) or none"`,
+	dir:    
+	string `args:"pos=0,required" usage:"package directory to write schema.gen.odin into"`,
+	db:     
+	string `args:"name=db"        usage:"introspect this database instead of structs (SQLite file path, or a DSN with -driver=postgres)"`,
+	driver: 
+	string `args:"name=driver"    usage:"DB driver for -db: sqlite (default) or postgres"`,
+	pkg:    
+	string `args:"name=package"   usage:"override the generated package name"`,
+	structs:
+	string `args:"name=structs"  usage:"DB-mode row structs: singular (default) or none"`,
 }
 
 // run parses args and generates the descriptors, returning a process exit
@@ -681,11 +722,16 @@ run :: proc(prog: string, args: []string) -> int {
 	}
 
 	if driver_kind == .Postgres && opt.db == "" {
-		fmt.eprintln("schemagen: -driver=postgres requires -db=<dsn> (the struct front-end is driver-agnostic)")
+		fmt.eprintln(
+			"schemagen: -driver=postgres requires -db=<dsn> (the struct front-end is driver-agnostic)",
+		)
 		return 2
 	}
 
-	schema := Schema{dir = opt.dir, struct_mode = struct_mode}
+	schema := Schema {
+		dir         = opt.dir,
+		struct_mode = struct_mode,
+	}
 
 	if opt.db != "" {
 		schema.pkg_name = opt.pkg if opt.pkg != "" else detect_pkg(opt.dir)

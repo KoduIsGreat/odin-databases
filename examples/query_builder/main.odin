@@ -100,7 +100,7 @@ main :: proc() {
 
 		rows, err := sql.query(db, q, ..args)
 		if err != nil {fmt.eprintfln("query: %v", err);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 		for sql.next(&rows) {
 			u: User
 			scan(&rows, &u) // concrete scan_User from scangen
@@ -130,7 +130,7 @@ main :: proc() {
 
 		rows, err := sql.query(db, q, ..args)
 		if err != nil {fmt.eprintfln("query: %v", err);return}
-		defer sql.close_rows(&rows)
+		defer sql.rows_close(&rows)
 		for sql.next(&rows) {
 			name, title: string
 			scan(&rows, &name, &title)

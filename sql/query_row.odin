@@ -41,7 +41,7 @@ db_query_row :: proc(db: ^DB, query_str: string, args: ..Value) -> Row {
 		},
 	}
 	if !next(&row.rows) {
-		close_rows(&row.rows)
+		rows_close(&row.rows)
 		return error_row(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""})
 	}
 	detach_rows(&row.rows)
@@ -59,7 +59,7 @@ conn_query_row :: proc(conn: ^Conn, query_str: string, args: ..Value) -> Row {
 		rows = {db = nil, conn = conn.handle, handle = handle, driver = conn.driver},
 	}
 	if !next(&row.rows) {
-		close_rows(&row.rows)
+		rows_close(&row.rows)
 		return error_row(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""})
 	}
 	detach_rows(&row.rows)
@@ -81,7 +81,7 @@ tx_query_row :: proc(tx: ^Tx, query_str: string, args: ..Value) -> Row {
 		rows = {db = nil, conn = tx.conn_handle, handle = handle, driver = tx.driver},
 	}
 	if !next(&row.rows) {
-		close_rows(&row.rows)
+		rows_close(&row.rows)
 		return error_row(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""})
 	}
 	detach_rows(&row.rows)
@@ -98,5 +98,5 @@ error_row :: #force_inline proc(err: Error) -> Row {
 // close_row releases any remaining resources held by the Row. Safe on
 // error Rows and on Rows whose connection has already been detached.
 close_row :: proc(row: ^Row) -> Error {
-	return close_rows(&row.rows)
+	return rows_close(&row.rows)
 }
