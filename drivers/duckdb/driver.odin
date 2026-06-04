@@ -110,7 +110,7 @@ as_cstring :: #force_inline proc "contextless" (s: string) -> cstring {
 @(private)
 bind_args :: proc(conn: ^Duck_Conn, stmt: ddb.Prepared_Statement, args: []drv.Value) -> drv.Error {
 	for val, i in args {
-		idx := ddb.idx_t(i + 1)
+		idx := ddb.Idx_T(i + 1)
 		st: ddb.State
 		switch v in val {
 		case bool:
@@ -120,9 +120,9 @@ bind_args :: proc(conn: ^Duck_Conn, stmt: ddb.Prepared_Statement, args: []drv.Va
 		case f64:
 			st = ddb.bind_double(stmt, idx, v)
 		case string:
-			st = ddb.bind_varchar_length(stmt, idx, as_cstring(v), ddb.idx_t(len(v)))
+			st = ddb.bind_varchar_length(stmt, idx, as_cstring(v), ddb.Idx_T(len(v)))
 		case []byte:
-			st = ddb.bind_blob(stmt, idx, rawptr(raw_data(v)), ddb.idx_t(len(v)))
+			st = ddb.bind_blob(stmt, idx, rawptr(raw_data(v)), ddb.Idx_T(len(v)))
 		case time.Time:
 			micros := time.time_to_unix_nano(v) / 1000
 			st = ddb.bind_timestamp(stmt, idx, ddb.Timestamp{micros = micros})
@@ -215,7 +215,7 @@ make_rows :: proc(conn: ^Duck_Conn, res: ddb.Result) -> ^Duck_Rows {
 
 	cols := make([]drv.Column, rows.col_count, conn.allocator)
 	for i in 0 ..< rows.col_count {
-		ci := ddb.idx_t(i)
+		ci := ddb.Idx_T(i)
 		// column_name's buffer is owned by the result; clone so it outlives it
 		// (and so close can free the result while Column names stay valid).
 		name := strings.clone(string(ddb.column_name(&rows.res, ci)), conn.allocator)

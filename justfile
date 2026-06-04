@@ -267,6 +267,11 @@ bindings-example:
 duckdb-lib version="":
     bash bindings/duckdb/fetch_libs.sh {{version}}
 
+# Regenerate Odin bindings from bindings/duckdb/input/duckdb.h via odin-c-bindgen
+# (same `bindgen.bin`/`obg` tool the SQLite bindings use).
+gen-duckdb-bindings:
+    bindgen.bin bindings/duckdb
+
 # Run the DuckDB driver's test suite (links + loads the prebuilt shared lib).
 # Run `just duckdb-lib` first if the library isn't present.
 test-duckdb:

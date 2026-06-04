@@ -1,0 +1,34 @@
+// DuckDB bindings config for odin-c-bindgen (obg).
+// See https://github.com/karl-zylinski/odin-c-bindgen for documentation.
+//
+// Regenerate with `just gen-duckdb-bindings` (or `bindgen.bin bindings/duckdb`).
+
+inputs = [
+	"input"
+]
+
+// Generated package goes here: duckdb/duckdb.odin
+output_folder = "duckdb"
+// Internal Odin package name for the generated bindings. Deliberately NOT
+// "duckdb" so it doesn't collide with the higher-level driver package
+// (drivers/duckdb, which is `package duckdb`). Import via
+// `bindings/duckdb/duckdb`; alias as you like (the driver uses `ddb`).
+package_name = "duckdb_c"
+
+// Foreign import block lives in imports.odin (cross-platform).
+imports_file = "imports.odin"
+
+// Strip the C prefixes so call sites read nicely:
+//   duckdb_open(...)      -> duckdb_c.open(...)
+//   duckdb_result        -> Result   (with force_ada_case_types below)
+//   DUCKDB_TYPE_BOOLEAN  -> .BOOLEAN (enum member, prefix auto-detected)
+remove_function_prefix = "duckdb_"
+remove_type_prefix     = "duckdb_"
+remove_macro_prefix    = "DUCKDB_"
+
+// Unlike the SQLite bindings (which keep snake_case for 1:1 parity with SQLite's
+// docs), use Ada_Case for type names here: it reads more idiomatically in Odin
+// (Database, Connection, Result, Timestamp) and sidesteps awkward type names
+// like a bare `type`/`time`. Functions and enum members keep their familiar
+// DuckDB spellings.
+force_ada_case_types = true

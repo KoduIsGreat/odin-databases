@@ -60,12 +60,11 @@ trap 'rm -rf "$tmp"' EXIT
 curl -fSL --retry 4 --retry-delay 2 -o "$tmp/duckdb.zip" "$url"
 unzip -o "$tmp/duckdb.zip" -d "$tmp" >/dev/null
 
-# Copy the shared library and the C header (handy for reference / bindgen).
+# Copy just the shared library. We deliberately do NOT touch input/duckdb.h —
+# that header is the pinned source of truth for the generated bindings (see
+# bindgen.sjson / `just gen-duckdb-bindings`); updating it is a separate, manual
+# step so the lib and the committed bindings can't silently drift.
 cp "$tmp/$libfile" "$dest/$libfile"
-if [ -f "$tmp/duckdb.h" ]; then
-  mkdir -p "$here/include"
-  cp "$tmp/duckdb.h" "$here/include/duckdb.h"
-fi
 
 echo "Done. Linked at runtime via LD_LIBRARY_PATH/DYLD_LIBRARY_PATH=$dest"
 echo "(the 'just' duckdb recipes set this for you)"
