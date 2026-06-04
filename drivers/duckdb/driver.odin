@@ -722,10 +722,24 @@ clone_node :: proc(n: Node, a: mem.Allocator) -> Node {
 // map_node materializes a Node tree into the destination of type `tid`:
 //   LIST   -> []T or [N]T   STRUCT -> a struct matched by field name
 //   MAP    -> []struct{key, value}   scalar -> the scalar coercions of set_scalar
-// NULLs within a composite scan as the destination's zero value. Returns false
-// on a shape/type mismatch.
+// A NULL (a null value, list element, or struct field) leaves the destination at
+// its zero value — or None when the destination is a Maybe(T). Returns false on
+// a shape/type mismatch.
 @(private)
 map_node :: proc(node: Node, tid: typeid, dest: rawptr, a: mem.Allocator) -> bool {
+	// A NULL maps to the zero value of any destination (and to None for a Maybe).
+	if node.kind == .Scalar {
+		if _, is_null := node.scalar.(drv.Null); is_null {
+			return true
+		}
+	}
+	// Maybe(T): scan the inner T, then mark the union non-nil. (A NULL was already
+	// handled above, leaving the union at its zero value, i.e. None.)
+	if inner, tag_off, tag_sz, is_maybe := maybe_union(tid); is_maybe {
+		if !map_node(node, inner, dest, a) {return false}
+		write_union_tag(dest, tag_off, tag_sz, 1)
+		return true
+	}
 	// Scalars (including []byte BLOB, time.Time, the typed exotics) go straight to
 	// the scalar coercions, even when their Odin type is a slice/array/struct.
 	if node.kind == .Scalar {
@@ -869,6 +883,33 @@ set_scalar :: proc(val: drv.Value, tid: typeid, dest: rawptr, a: mem.Allocator) 
 	// Leave the destination at its zero value.
 	}
 	return true
+}
+
+// maybe_union reports whether tid is a nil-able single-variant union (Maybe(T)),
+// returning the inner variant's typeid and the union's tag layout. Mirrors the
+// core scan layer's helper of the same name (the core's is private).
+@(private)
+maybe_union :: proc(tid: typeid) -> (inner: typeid, tag_offset: uintptr, tag_size: int, ok: bool) {
+	ti := runtime.type_info_base(type_info_of(tid))
+	u, is_union := ti.variant.(runtime.Type_Info_Union)
+	if !is_union {return}
+	if len(u.variants) != 1 || u.no_nil {return}
+	return u.variants[0].id, u.tag_offset, u.tag_type.size, true
+}
+
+@(private)
+write_union_tag :: proc(ptr: rawptr, tag_offset: uintptr, tag_size: int, tag: u64) {
+	tagptr := rawptr(uintptr(ptr) + tag_offset)
+	switch tag_size {
+	case 1:
+		(^u8)(tagptr)^ = u8(tag)
+	case 2:
+		(^u16)(tagptr)^ = u16(tag)
+	case 4:
+		(^u32)(tagptr)^ = u32(tag)
+	case 8:
+		(^u64)(tagptr)^ = u64(tag)
+	}
 }
 
 // Build a Rows from an owned, materialized result, caching per-column schema.

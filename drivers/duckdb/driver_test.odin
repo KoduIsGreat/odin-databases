@@ -580,6 +580,48 @@ test_nested_list :: proc(t: ^testing.T) {
 	testing.expect_value(t, xs[1][0], 3)
 }
 
+// NULL elements inside a composite: scan as None into []Maybe(T), and as the
+// zero value into a plain []T.
+@(test)
+test_list_maybe_null :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT [1, NULL, 3]::INTEGER[]")
+	defer sql.close_row(&row)
+
+	xs: []Maybe(i64)
+	testing.expect_value(t, sql.scan(&row, &xs), nil)
+	defer delete(xs)
+	testing.expect_value(t, len(xs), 3)
+	v0, ok0 := xs[0].?
+	testing.expect(t, ok0 && v0 == 1, "xs[0] should be 1")
+	_, ok1 := xs[1].?
+	testing.expect(t, !ok1, "xs[1] should be None")
+	v2, ok2 := xs[2].?
+	testing.expect(t, ok2 && v2 == 3, "xs[2] should be 3")
+}
+
+// A NULL nested composite (inner list is NULL) scans as an empty/zero inner.
+@(test)
+test_nested_list_null :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT [[1, 2], NULL, [3]]::INTEGER[][]")
+	defer sql.close_row(&row)
+	xs: [][]i64
+	testing.expect_value(t, sql.scan(&row, &xs), nil)
+	defer {
+		for inner in xs {delete(inner)}
+		delete(xs)
+	}
+	testing.expect_value(t, len(xs), 3)
+	testing.expect_value(t, len(xs[0]), 2)
+	testing.expect_value(t, len(xs[1]), 0) // NULL inner -> nil slice
+	testing.expect_value(t, xs[2][0], 3)
+}
+
 @(test)
 test_query_error :: proc(t: ^testing.T) {
 	db := open_mem(t)
