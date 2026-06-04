@@ -47,6 +47,12 @@ mode.
   time — the `just` recipes set `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` for you.
   See [`drivers/duckdb`](drivers/duckdb) for the driver's scope and caveats.
 
+  The Odin bindings are pre-generated and committed, so setup is just "fetch the
+  library" — you do **not** need to run `just gen-duckdb-bindings`. Only
+  regenerate when bumping the pinned `duckdb.h`, and use that recipe (not
+  `bindgen.bin` directly); see
+  [`bindings/duckdb/README.md`](bindings/duckdb/README.md) for why.
+
 ## Installing it in your project
 
 This repo is an Odin **collection** named `database`. Vendor it (git submodule

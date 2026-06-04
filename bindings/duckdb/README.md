@@ -29,15 +29,34 @@ comments in `bindgen.sjson` for why.
 
 ## (Re)generating bindings
 
+**The generated `duckdb/duckdb.odin` is committed** — a fresh clone builds
+without regenerating. You only need to regenerate when you bump
+`input/duckdb.h`. Setting up the driver does **not** require this step.
+
 From the repo root:
 
 ```sh
-just gen-duckdb-bindings        # or: bindgen.bin bindings/duckdb   (obg)
+just gen-duckdb-bindings        # wraps bindgen.bin via gen_bindings.sh
 ```
 
 `bindgen.bin` (aka `obg`, the `odin-c-bindgen` binary) reads `input/duckdb.h`,
 writes the package into `duckdb/`, and appends `imports.odin` so the foreign
 import block ships inside the generated package.
+
+> **Do not run `bindgen.bin bindings/duckdb` directly.** `duckdb.h` includes
+> `<stdint.h>`/`<stdbool.h>`/`<stddef.h>`, and bindgen's libclang does not find
+> the C standard / compiler-builtin headers on its own (on macOS there is no
+> `/usr/include` without an SDK). When it can't resolve them it does **not**
+> fail — it silently falls back to `int` for every unknown type, so `idx_t`
+> (`uint64_t`) and all the `int64_t`/`int8_t`/`bool` fields collapse to `i32`,
+> producing bindings that compile-fail against `drivers/duckdb`. The
+> `gen_bindings.sh` wrapper (run by the recipe) feeds clang the right include
+> dirs — the libclang resource dir's `include/` plus the platform SDK's
+> `usr/include` — and injects them into a gitignored config copy so the
+> committed `bindgen.sjson` stays portable. Override `LLVM_PREFIX` / `SDKROOT`
+> if your toolchain lives elsewhere. If a regenerate ever leaves an all-`i32`
+> diff in `duckdb/duckdb.odin`, those include dirs weren't found —
+> `git checkout` the file and fix the paths before retrying.
 
 ## Getting the library
 

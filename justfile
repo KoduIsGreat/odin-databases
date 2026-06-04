@@ -268,9 +268,13 @@ duckdb-lib version="":
     bash bindings/duckdb/fetch_libs.sh {{version}}
 
 # Regenerate Odin bindings from bindings/duckdb/input/duckdb.h via odin-c-bindgen
-# (same `bindgen.bin`/`obg` tool the SQLite bindings use).
+# (same `bindgen.bin`/`obg` tool the SQLite bindings use). The wrapper script
+# feeds libclang the host's C-stdlib/builtin include paths — without them the
+# regenerate silently produces broken (all-i32) types. See the script header
+# and bindings/duckdb/README.md. NOTE: the bindings are committed; you only need
+# this when updating input/duckdb.h.
 gen-duckdb-bindings:
-    bindgen.bin bindings/duckdb
+    bash bindings/duckdb/gen_bindings.sh
 
 # Run the DuckDB driver's test suite (links + loads the prebuilt shared lib).
 # Run `just duckdb-lib` first if the library isn't present.
