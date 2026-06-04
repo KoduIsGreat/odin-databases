@@ -207,6 +207,40 @@ set_field :: proc(
 		case:
 			return i64, false
 		}
+	case i128:
+		switch tid {
+		case i128:
+			(^i128)(ptr)^ = v
+		case u128:
+			(^u128)(ptr)^ = u128(v)
+		case i64:
+			(^i64)(ptr)^ = i64(v)
+		case u64:
+			(^u64)(ptr)^ = u64(v)
+		case int:
+			(^int)(ptr)^ = int(v)
+		case f64:
+			(^f64)(ptr)^ = f64(v)
+		case:
+			return i128, false
+		}
+	case u128:
+		switch tid {
+		case u128:
+			(^u128)(ptr)^ = v
+		case i128:
+			(^i128)(ptr)^ = i128(v)
+		case u64:
+			(^u64)(ptr)^ = u64(v)
+		case i64:
+			(^i64)(ptr)^ = i64(v)
+		case uint:
+			(^uint)(ptr)^ = uint(v)
+		case f64:
+			(^f64)(ptr)^ = f64(v)
+		case:
+			return u128, false
+		}
 	case f64:
 		switch tid {
 		case f64:
@@ -216,6 +250,17 @@ set_field :: proc(
 		case:
 			return f64, false
 		}
+	case Custom_Value:
+		// Driver-defined cell (e.g. DuckDB DECIMAL): let the producing driver
+		// write it into the destination type. A local copy makes the inline
+		// storage addressable for the convert call.
+		if v.convert != nil {
+			cv := v
+			if v.convert(&cv.storage, tid, ptr, context.allocator) {
+				return nil, true
+			}
+		}
+		return Custom_Value, false
 	case string:
 		if tid != string {return string, false}
 		(^string)(ptr)^ = v if owned else strings.clone(v)

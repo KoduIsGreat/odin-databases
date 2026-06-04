@@ -48,26 +48,42 @@ just run-duckdb-example    # the examples/duckdb demo
 - Connection lifecycle, `exec` / `query`, prepared statements (`prepare` +
   `stmt_exec` / `stmt_query`), and transactions (`begin` / `commit` /
   `rollback`).
-- Parameter binding for `bool`, `i64`, `f64`, `string`, `[]byte`, and
-  `time.Time` (bound as a microsecond `TIMESTAMP`); `NULL` via the scan/`Maybe`
-  machinery.
-- Result columns mapped to `bool`, `i64`, `f64`, `string`, `[]byte`, and
-  `time.Time` (TIMESTAMP/DATE/TIME). Multi-statement parameterless `exec` runs
-  every `;`-separated statement, so DDL / migration scripts work.
+- Parameter binding for `bool`, `i64`, `i128` (`HUGEINT`), `u128` (`UHUGEINT`),
+  `f64`, `string`, `[]byte`, and `time.Time` (bound as a microsecond
+  `TIMESTAMP`); `NULL` via the scan/`Maybe` machinery.
+- Reads go through DuckDB's modern **data-chunk / vector API**
+  (`duckdb_fetch_chunk`): per-column vector pointers are cached once per chunk,
+  so the hot path does no per-cell metadata lookups and no per-cell allocation;
+  `VARCHAR`/`BLOB` cells are borrowed straight out of the chunk.
+- Column type mapping, all lossless:
+  - `BOOLEAN` → `bool`; `TINYINT`…`UINTEGER` → `i64`.
+  - `UBIGINT` / `HUGEINT` → `i128`, `UHUGEINT` → `u128` (no precision loss).
+  - `FLOAT` / `DOUBLE` → `f64`.
+  - `DECIMAL` → exact: scan into `string` for the exact text, `f64` for
+    convenience (lossy by choice), or `i128` for the unscaled value.
+  - `VARCHAR` → `string`, `BLOB` → `[]byte`.
+  - `TIMESTAMP` / `TIMESTAMP_S` / `_MS` / `_NS` / `TIMESTAMP_TZ` / `DATE` /
+    `TIME` / `TIME_TZ` → `time.Time`, each decoded at its correct unit;
+    `TIMESTAMP_TZ` / `TIME_TZ` fold the zone offset into the UTC instant.
+- Multi-statement parameterless `exec` runs every `;`-separated statement, so
+  DDL / migration scripts work.
 
 ## Preliminary — known limitations
 
 This is an early driver; the rough edges are deliberate, not hidden:
 
-- **Eager results, deprecated value API.** `duckdb_query` /
-  `execute_prepared` materialize the entire result in memory, and cells are read
-  through DuckDB's stable-but-"deprecated" `value_*` convenience functions rather
-  than the faster data-chunk / vector API. Correct, but not the fast path, and
-  large result sets are fully buffered.
-- **Wide integers.** `UBIGINT` / `HUGEINT` are read via `i64`, so very large
-  values can lose precision. Unmodeled/exotic types fall back to their `VARCHAR`
-  rendering.
+- **Eager results (no streaming).** `duckdb_query` / `execute_prepared`
+  materialize the whole result; `fetch_chunk` then walks that buffer, so large
+  result sets are held fully in memory. A future streaming exec would reuse the
+  same chunk reader.
+- **Composite / exotic types are unsupported.** `LIST`, `STRUCT`, `MAP`,
+  `ARRAY`, `ENUM`, `UUID`, `INTERVAL`, `BIT`, `VARINT`, and `UNION` can be
+  queried, but scanning such a column fails with a type mismatch rather than
+  silently returning an approximate string. Structured support will reuse the
+  same `Custom_Value` mechanism `DECIMAL` uses. (Binding a `DECIMAL` as a
+  parameter isn't supported either — pass a string and `CAST`.)
 - **`last_insert_id` is always 0** — DuckDB has no rowid / last-insert concept.
+  Use `RETURNING` (works through the normal query path).
 - **Isolation levels are ignored.** `begin` starts DuckDB's snapshot-isolated
   transaction regardless of the requested `Isolation_Level` / `read_only`.
 - **No advisory locking** (the optional `lock` / `unlock` contract is left nil),
@@ -77,5 +93,5 @@ This is an early driver; the rough edges are deliberate, not hidden:
   caveat as the SQLite driver). For shared in-memory state across a pool, call
   `sql.set_max_open_conns(db, 1)` or use a file DSN.
 
-Contributions that move the read path onto the data-chunk API, add streaming,
-or fill in the wide-integer / temporal-type gaps are welcome.
+Contributions that add streaming, fill in the composite/exotic types (via
+`Custom_Value`), or implement advisory locking are welcome.

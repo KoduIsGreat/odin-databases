@@ -1,5 +1,6 @@
 package driver
 
+import "core:mem"
 import "core:time"
 
 // Value is the set of types that can be passed as query arguments
@@ -9,14 +10,46 @@ import "core:time"
 // valid only until the next call to rows_next() or rows_close(). The
 // user-facing sql.scan() clones string and []byte values so scanned
 // results outlive the Rows.
+//
+// i128/u128 carry backend integers wider than i64 (e.g. DuckDB
+// HUGEINT/UHUGEINT/UBIGINT) without precision loss. Custom_Value is the
+// open extension point for column types the core does not model directly
+// (see its doc comment) — it keeps this union closed to plain Odin types
+// while letting drivers expose their own exotic types.
 Value :: union {
 	bool,
 	i64,
+	i128,
+	u128,
 	f64,
 	string,
 	[]byte,
 	time.Time,
+	Custom_Value,
 	Null,
+}
+
+// Custom_Value is a self-contained cell for column types the core union does
+// not model directly (e.g. DuckDB DECIMAL). The producing driver packs a small,
+// trivially-copyable POD into `storage` and supplies `convert`, which writes the
+// cell into a destination of the requested Odin type and returns true — or
+// returns false if it cannot represent the cell as that type (the scan then
+// reports a column/destination type mismatch).
+//
+// Because `storage` is inline bytes with no borrowed pointers, a Custom_Value
+// copies freely and survives query_row detachment with no special handling — no
+// clone/free dance, unlike borrowed string/[]byte values. The 16-byte-aligned
+// [2]i128 storage holds PODs up to 32 bytes (enough for a 128-bit value plus
+// metadata such as a decimal scale). Variable-size composites (LIST/STRUCT/MAP)
+// are intentionally out of scope for this mechanism.
+//
+// `convert` receives a pointer to the storage, the destination field's typeid,
+// the destination pointer, and an allocator to use for any allocation it must
+// make (e.g. rendering to a string). Allocated results are owned by the caller,
+// matching scan()'s clone-on-read semantics.
+Custom_Value :: struct {
+	storage: [2]i128,
+	convert: proc(payload: rawptr, dest_type: typeid, dest: rawptr, allocator: mem.Allocator) -> bool,
 }
 
 // Null represents a SQL NULL value with an associated type hint

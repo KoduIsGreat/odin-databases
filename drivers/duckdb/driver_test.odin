@@ -1,5 +1,6 @@
 package duckdb
 
+import "core:fmt"
 import "core:testing"
 import "core:time"
 
@@ -202,6 +203,159 @@ test_transaction_commit_rollback :: proc(t: ^testing.T) {
 	n: i64
 	sql.scan(&row, &n)
 	testing.expect_value(t, n, 1)
+}
+
+// Wide integers must round-trip without precision loss: HUGEINT (i128),
+// UBIGINT (u64, exceeds i64), and UHUGEINT (u128, exceeds i128).
+@(test)
+test_wide_integers :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	// Cast from string literals: a bare 128-bit numeric literal is parsed as
+	// DOUBLE first (losing precision / overflowing), so go through VARCHAR.
+	row := sql.query_row(
+		db,
+		"SELECT '170141183460469231731687303715884105727'::HUGEINT, " +
+		"'18446744073709551615'::UBIGINT, " +
+		"'340282366920938463463374607431768211455'::UHUGEINT",
+	)
+	defer sql.close_row(&row)
+
+	h, ub: i128
+	uh: u128
+	testing.expect_value(t, sql.scan(&row, &h, &ub, &uh), nil)
+	testing.expect_value(t, h, i128(170141183460469231731687303715884105727))
+	testing.expect_value(t, ub, i128(18446744073709551615))
+	testing.expect_value(t, uh, u128(340282366920938463463374607431768211455))
+}
+
+// A DECIMAL with more significant digits than f64 can hold must scan exactly
+// when read into a string (the lossless path).
+@(test)
+test_decimal_exact :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT 12345678901234567890123.4567::DECIMAL(38,4)")
+	defer sql.close_row(&row)
+	s: string
+	testing.expect_value(t, sql.scan(&row, &s), nil)
+	defer delete(s)
+	testing.expect_value(t, s, "12345678901234567890123.4567")
+}
+
+// Exact decimal formatting across sign, leading-zero, and scale-0 cases.
+@(test)
+test_decimal_formatting :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	Case :: struct {
+		expr: string,
+		want: string,
+	}
+	cases := []Case {
+		{"0.0005::DECIMAL(10,4)", "0.0005"},
+		{"-12.3400::DECIMAL(10,4)", "-12.3400"},
+		{"42::DECIMAL(10,0)", "42"},
+	}
+	for c in cases {
+		row := sql.query_row(db, fmt.tprintf("SELECT %s", c.expr))
+		s: string
+		testing.expect_value(t, sql.scan(&row, &s), nil)
+		testing.expect(t, s == c.want, fmt.tprintf("decimal %s -> %q, want %q", c.expr, s, c.want))
+		delete(s)
+		sql.close_row(&row)
+	}
+}
+
+// Scanning a DECIMAL into f64 is the convenient (lossy-by-choice) path.
+@(test)
+test_decimal_as_f64 :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT 3.14::DECIMAL(10,2)")
+	defer sql.close_row(&row)
+	f: f64
+	testing.expect_value(t, sql.scan(&row, &f), nil)
+	testing.expect(t, abs(f - 3.14) < 1e-9, fmt.tprintf("decimal as f64 -> %v, want ~3.14", f))
+}
+
+// Every TIMESTAMP scale (s/ms/ns) and TIMESTAMPTZ must decode to the same
+// instant — the old reader read them all as microseconds, corrupting s/ms/ns.
+@(test)
+test_timestamp_scales :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	Row :: struct {
+		s, ms, ns, tz: time.Time,
+	}
+	row := sql.query_row(
+		db,
+		"SELECT '2023-11-14 22:13:20'::TIMESTAMP_S AS s, " +
+		"'2023-11-14 22:13:20'::TIMESTAMP_MS AS ms, " +
+		"'2023-11-14 22:13:20'::TIMESTAMP_NS AS ns, " +
+		"'2023-11-14 22:13:20+00'::TIMESTAMPTZ AS tz",
+	)
+	defer sql.close_row(&row)
+	got: Row
+	testing.expect_value(t, sql.scan(&row, &got), nil)
+	want := i64(1_700_000_000) * i64(1e9) // 2023-11-14 22:13:20 UTC
+	testing.expect_value(t, got.s._nsec, want)
+	testing.expect_value(t, got.ms._nsec, want)
+	testing.expect_value(t, got.ns._nsec, want)
+	testing.expect_value(t, got.tz._nsec, want)
+}
+
+// TIME_TZ must fold its zone offset into the UTC instant (the old reader
+// dropped the offset). 12:30:00+02 == 10:30:00 UTC.
+@(test)
+test_time_tz :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	Row :: struct {
+		t: time.Time,
+	}
+	row := sql.query_row(db, "SELECT '12:30:00+02'::TIMETZ AS t")
+	defer sql.close_row(&row)
+	got: Row
+	testing.expect_value(t, sql.scan(&row, &got), nil)
+	testing.expect_value(t, got.t._nsec, i64(10 * 3600 + 30 * 60) * i64(1e9))
+}
+
+// More rows than DuckDB's vector size (2048) forces multiple chunks, exercising
+// the chunk-boundary advance and that borrowed VARCHAR cells survive being
+// cloned by scan() right up to the boundary.
+@(test)
+test_multi_chunk :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	rows, e := sql.query(
+		db,
+		"SELECT i, ('row' || i::VARCHAR) AS s FROM range(5000) t(i) ORDER BY i",
+	)
+	testing.expect_value(t, e, nil)
+	defer sql.rows_close(&rows)
+
+	count := 0
+	sum: i128
+	for sql.next(&rows) {
+		id: i64
+		s: string
+		testing.expect_value(t, sql.scan(&rows, &id, &s), nil)
+		if id == 4999 {testing.expect_value(t, s, "row4999")}
+		delete(s)
+		sum += i128(id)
+		count += 1
+	}
+	testing.expect_value(t, sql.rows_err(&rows), nil)
+	testing.expect_value(t, count, 5000)
+	testing.expect_value(t, sum, i128(4999) * 5000 / 2)
 }
 
 @(test)

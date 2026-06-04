@@ -99,6 +99,10 @@ values_equal :: proc(a, b: drv.Value) -> bool {
 		v, ok := b.(bool); return ok && v == av
 	case i64:
 		v, ok := b.(i64); return ok && v == av
+	case i128:
+		v, ok := b.(i128); return ok && v == av
+	case u128:
+		v, ok := b.(u128); return ok && v == av
 	case f64:
 		v, ok := b.(f64); return ok && v == av
 	case string:
@@ -107,6 +111,10 @@ values_equal :: proc(a, b: drv.Value) -> bool {
 		v, ok := b.([]byte); return ok && slice.equal(v, av)
 	case time.Time:
 		v, ok := b.(time.Time); return ok && v == av
+	case drv.Custom_Value:
+		// Opaque driver cell; the mock never produces these, so compare by
+		// identity of the convert proc and inline storage.
+		v, ok := b.(drv.Custom_Value); return ok && v == av
 	case drv.Null:
 		_, ok := b.(drv.Null); return ok
 	case:

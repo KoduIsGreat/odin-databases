@@ -6,6 +6,7 @@ package sql
 import drv "./driver"
 
 Value :: drv.Value
+Custom_Value :: drv.Custom_Value
 Null :: drv.Null
 Result :: drv.Result
 Column :: drv.Column
