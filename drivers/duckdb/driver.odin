@@ -14,10 +14,10 @@
 //   - Streaming results. duckdb_query / execute_prepared materialize the whole
 //     result; fetch_chunk then walks that buffer. Large result sets are held
 //     fully in memory (a future streaming exec would reuse this same reader).
-//   - UNION, BIT, and VARINT are not modeled: a column of such a type can be
-//     queried, but scanning it fails with a type mismatch. (LIST/ARRAY/STRUCT/
-//     MAP scan structurally into []T / [N]T / structs / []struct{key,value};
-//     ENUM/UUID/INTERVAL have native mappings.)
+//   - Composite/exotic types read but cannot be bound as query parameters: pass
+//     a string/literal and CAST. (LIST/ARRAY/STRUCT/MAP/UNION scan structurally
+//     into []T / [N]T / structs / []struct{key,value}; ENUM/UUID/INTERVAL/BIT/
+//     VARINT have native mappings.)
 //   - last_insert_id is always 0 (DuckDB has no rowid/last-insert concept).
 //   - Isolation levels are ignored: BEGIN starts DuckDB's snapshot-isolated tx.
 //
@@ -442,11 +442,90 @@ read_cell :: proc(rows: ^Duck_Rows, col: int, row: u64, dest: ^drv.Value) {
 	}
 	m := rows.meta[col]
 	#partial switch m.type {
-	case .LIST, .ARRAY, .STRUCT, .MAP:
+	case .LIST, .ARRAY, .STRUCT, .MAP, .UNION:
 		dest^ = build_composite_cell(rows, rows.vectors[col], m.logical, row)
+		return
+	case .BIT:
+		dest^ = decode_bit(rows.vdata[col], row, mem.dynamic_arena_allocator(&rows.tree_arena))
+		return
+	case .VARINT:
+		dest^ = decode_varint(rows.vdata[col], row, mem.dynamic_arena_allocator(&rows.tree_arena))
 		return
 	}
 	read_vector_cell(rows.vdata[col], m, row, dest)
+}
+
+// decode_varint renders DuckDB's arbitrary-precision VARINT as an exact decimal
+// string. In-memory it is a 3-byte big-endian header (bit 7 of byte 0 is the
+// sign: 1 = positive; the low 23 bits are the magnitude byte count) followed by
+// the big-endian magnitude. Negatives store every byte bitwise-complemented (so
+// raw byte order matches numeric order), so we undo that first.
+@(private)
+decode_varint :: proc(data: rawptr, row: u64, a: mem.Allocator) -> drv.Value {
+	st := &([^]ddb.String_T)(data)[row]
+	n := int(ddb.string_t_length(st^))
+	if n < 4 {return "0"}
+	src := ([^]u8)(ddb.string_t_data(st))
+	negative := (src[0] & 0x80) == 0
+
+	buf := make([]u8, n, context.temp_allocator)
+	mask: u8 = 0xff if negative else 0x00
+	for i in 0 ..< n {buf[i] = src[i] ~ mask}
+	mag := buf[3:] // big-endian magnitude
+
+	digits := bigendian_to_decimal(mag, a)
+	if negative && digits != "0" {
+		out := make([]u8, len(digits) + 1, a)
+		out[0] = '-'
+		copy(out[1:], digits)
+		delete(digits, a)
+		return string(out)
+	}
+	return digits
+}
+
+// bigendian_to_decimal converts a big-endian base-256 magnitude to its decimal
+// digits (allocated in `a`) by repeated division by 10.
+@(private)
+bigendian_to_decimal :: proc(mag: []u8, a: mem.Allocator) -> string {
+	work := make([]u8, len(mag), context.temp_allocator)
+	copy(work, mag)
+	rev := make([dynamic]u8, context.temp_allocator)
+	for {
+		rem, nonzero := 0, false
+		for i in 0 ..< len(work) {
+			cur := rem * 256 + int(work[i])
+			work[i] = u8(cur / 10)
+			rem = cur % 10
+			if work[i] != 0 {nonzero = true}
+		}
+		append(&rev, u8('0' + rem))
+		if !nonzero {break}
+	}
+	out := make([]u8, len(rev), a)
+	for i in 0 ..< len(rev) {out[i] = rev[len(rev) - 1 - i]}
+	return string(out)
+}
+
+// decode_bit renders a BIT value as a '0'/'1' string. In-memory a BIT is a
+// string_t whose first byte is the number of unused padding bits in the first
+// data byte; the remaining bytes hold the bits MSB-first. The returned string is
+// allocated with `a` (the per-row arena for live rows; cloned by scan/detach).
+@(private)
+decode_bit :: proc(data: rawptr, row: u64, a: mem.Allocator) -> drv.Value {
+	st := &([^]ddb.String_T)(data)[row]
+	n := int(ddb.string_t_length(st^))
+	if n <= 1 {return ""}
+	p := ([^]u8)(ddb.string_t_data(st))
+	padding := int(p[0])
+	nbits := (n - 1) * 8 - padding
+	if nbits <= 0 {return ""}
+	out := make([]u8, nbits, a)
+	for i in 0 ..< nbits {
+		bit := padding + i
+		out[i] = '0' + ((p[1 + bit / 8] >> uint(7 - bit % 8)) & 1)
+	}
+	return string(out)
 }
 
 // enum_index reads an ENUM's dictionary index from its physical storage int.
@@ -621,12 +700,33 @@ build_node :: proc(vec: ddb.Vector, lt: ddb.Logical_Type, row: u64, a: mem.Alloc
 			ddb.destroy_logical_type(&clt)
 		}
 		return Node{kind = .Struct, children = kids, field_names = names}
+	case .UNION:
+		// A UNION is physically a STRUCT: child 0 is the tag, children 1..N are the
+		// members. Expose it as a struct of members (the inactive ones are NULL),
+		// so it scans into a struct with Maybe(T) member fields.
+		n := int(ddb.union_type_member_count(lt))
+		kids := make([]Node, n, a)
+		names := make([]string, n, a)
+		for i in 0 ..< n {
+			mi := ddb.Idx_T(i)
+			mname := ddb.union_type_member_name(lt, mi)
+			names[i] = strings.clone(string(mname), a)
+			ddb.free(rawptr(mname))
+			mlt := ddb.union_type_member_type(lt, mi)
+			kids[i] = build_node(ddb.struct_vector_get_child(vec, mi + 1), mlt, row, a)
+			ddb.destroy_logical_type(&mlt)
+		}
+		return Node{kind = .Struct, children = kids, field_names = names}
 	case .ENUM:
 		idx := enum_index(ddb.enum_internal_type(lt), ddb.vector_get_data(vec), row)
 		lbl := ddb.enum_dictionary_value(lt, ddb.Idx_T(idx))
 		s := strings.clone(string(lbl), a)
 		ddb.free(rawptr(lbl)) // enum_dictionary_value must be duckdb_free'd
 		return Node{kind = .Scalar, scalar = s}
+	case .BIT:
+		return Node{kind = .Scalar, scalar = decode_bit(ddb.vector_get_data(vec), row, a)}
+	case .VARINT:
+		return Node{kind = .Scalar, scalar = decode_varint(ddb.vector_get_data(vec), row, a)}
 	case:
 		m := Col_Meta {
 			type = t,

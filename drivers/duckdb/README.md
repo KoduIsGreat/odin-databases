@@ -69,11 +69,14 @@ just run-duckdb-example    # the examples/duckdb demo
     `INTERVAL` → a readable `string` or the typed `duckdb.Interval`.
   - Composites scan structurally into native Odin types: `LIST` → `[]T`,
     `ARRAY` → `[N]T`, `STRUCT` → a struct matched by field name, `MAP` →
-    `[]struct{key, value}`, nested arbitrarily. A NULL element/field scans as
-    the destination's zero value, or as `None` into a `Maybe(T)` element. (Scan
-    a top-level `STRUCT` column through a wrapper field — a lone struct
-    destination hits scan's reflective column-name-matching path, the same
-    caveat as a lone `time.Time`.)
+    `[]struct{key, value}`, `UNION` → a struct of its members (inactive ones
+    `None`), nested arbitrarily. A NULL element/field scans as the destination's
+    zero value, or as `None` into a `Maybe(T)` element. (Scan a top-level
+    `STRUCT`/`UNION` column through a wrapper field — a lone struct destination
+    hits scan's reflective column-name-matching path, the same caveat as a lone
+    `time.Time`.)
+  - `BIT` → a `'0'/'1'` `string`; `VARINT` → its exact decimal `string`
+    (arbitrary precision).
 - Multi-statement parameterless `exec` runs every `;`-separated statement, so
   DDL / migration scripts work.
 
@@ -85,10 +88,9 @@ This is an early driver; the rough edges are deliberate, not hidden:
   materialize the whole result; `fetch_chunk` then walks that buffer, so large
   result sets are held fully in memory. A future streaming exec would reuse the
   same chunk reader.
-- **A few types remain unsupported on scan:** `UNION`, `BIT`, and `VARINT`
-  (scanning such a column fails with a type mismatch). (Binding a
-  `DECIMAL`/`UUID`/`INTERVAL`/composite as a parameter isn't supported either —
-  pass a string/literal and `CAST`.)
+- **Binding the exotic types as parameters isn't supported** — a
+  `DECIMAL`/`UUID`/`INTERVAL`/composite query argument should be passed as a
+  string/literal and `CAST`. Reading them back works as above.
 - **Scanned composite memory is caller-owned.** A scanned `[]T` (and any nested
   slices/strings within it) is allocated with `context.allocator`; free it
   yourself, like any scanned string.

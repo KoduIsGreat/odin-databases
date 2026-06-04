@@ -622,6 +622,93 @@ test_nested_list_null :: proc(t: ^testing.T) {
 	testing.expect_value(t, xs[2][0], 3)
 }
 
+// BIT scans to a '0'/'1' string matching DuckDB's text rendering.
+@(test)
+test_bit :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT '10110'::BIT")
+	defer sql.close_row(&row)
+	s: string
+	testing.expect_value(t, sql.scan(&row, &s), nil)
+	defer delete(s)
+	testing.expect_value(t, s, "10110")
+}
+
+// UNION scans as a struct of its members (the inactive ones None), through a
+// wrapper field (a lone struct destination hits the reflective scan path).
+@(test)
+test_union :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	_, ce := sql.exec(db, "CREATE TABLE u (val UNION(num INTEGER, txt VARCHAR))")
+	testing.expect_value(t, ce, nil)
+	sql.exec(db, "INSERT INTO u VALUES (union_value(num := 42)), (union_value(txt := 'hi'))")
+
+	U :: struct {
+		num: Maybe(i64),
+		txt: Maybe(string),
+	}
+	Row :: struct {
+		u: U,
+	}
+	rows, e := sql.query(db, "SELECT val AS u FROM u ORDER BY union_tag(val)") // num < txt
+	testing.expect_value(t, e, nil)
+	defer sql.rows_close(&rows)
+
+	seen := 0
+	for sql.next(&rows) {
+		r: Row
+		testing.expect_value(t, sql.scan(&rows, &r), nil)
+		if n, ok := r.u.num.?; ok {
+			testing.expect_value(t, n, 42)
+			_, has_txt := r.u.txt.?
+			testing.expect(t, !has_txt, "num row should have no txt")
+		} else if s, ok := r.u.txt.?; ok {
+			testing.expect_value(t, s, "hi")
+			delete(s)
+		} else {
+			testing.expect(t, false, "union row had no active member")
+		}
+		seen += 1
+	}
+	testing.expect_value(t, seen, 2)
+}
+
+// VARINT (arbitrary precision) scans to its exact decimal string, including
+// negatives and values far beyond i128.
+@(test)
+test_varint :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	Case :: struct {
+		expr, want: string,
+	}
+	cases := []Case {
+		{"0", "0"},
+		{"255", "255"},
+		{"256", "256"},
+		{"-1", "-1"},
+		{"-123456789", "-123456789"},
+		{"1234567890123456789012345", "1234567890123456789012345"},
+		{
+			"-999999999999999999999999999999999999999",
+			"-999999999999999999999999999999999999999",
+		},
+	}
+	for c in cases {
+		row := sql.query_row(db, fmt.tprintf("SELECT '%s'::VARINT", c.expr))
+		s: string
+		testing.expect_value(t, sql.scan(&row, &s), nil)
+		testing.expect(t, s == c.want, fmt.tprintf("varint %s -> %q, want %q", c.expr, s, c.want))
+		delete(s)
+		sql.close_row(&row)
+	}
+}
+
 @(test)
 test_query_error :: proc(t: ^testing.T) {
 	db := open_mem(t)
