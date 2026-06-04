@@ -35,10 +35,12 @@ just duckdb-lib                 # or: bash bindings/duckdb/fetch_libs.sh
 Because the library is linked dynamically, the loader must find it at run time.
 The `just` recipes set `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` for you; running a
 binary by hand, set it yourself (see
-[`bindings/duckdb`](../../bindings/duckdb/README.md)). Run the test suite with:
+[`bindings/duckdb`](../../bindings/duckdb/README.md)). Run the test suite, or the
+runnable [`examples/duckdb`](../../examples/duckdb) demo, with:
 
 ```sh
-just test-duckdb
+just test-duckdb           # the driver's test suite
+just run-duckdb-example    # the examples/duckdb demo
 ```
 
 ## What works

@@ -63,6 +63,7 @@ check-all:
     odin check examples/introspection {{coll}}
     odin check examples/ss {{coll}} -define:DATABASE_PG_TLS=true
     odin check examples/migrations {{coll}}
+    odin check examples/duckdb {{coll}}
     odin check examples/testing -no-entry-point {{coll}}
     odin check drivers/sqlite -no-entry-point {{coll}}
     odin check drivers/postgres -no-entry-point {{coll}}
@@ -274,6 +275,13 @@ test-duckdb:
 # Run the raw DuckDB bindings smoke test (verifies the shared lib + bindings link).
 duckdb-bindings-example:
     cd bindings/duckdb/example && {{duck_ld}} odin run .
+
+# Run the DuckDB driver example (loads the prebuilt shared lib). The generic
+# `run-example` recipe can't set the loader path, so DuckDB gets its own.
+#   just duckdb-lib && just run-duckdb-example
+run-duckdb-example:
+    mkdir -p bin
+    {{duck_ld}} odin run examples/duckdb {{coll}} -out:bin/duckdb-example
 
 # --- Maintenance --------------------------------------------------------------
 
