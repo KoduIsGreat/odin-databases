@@ -62,4 +62,14 @@ if [ ! -f "$lib" ]; then
   bash "$PROJECT_DIR/bindings/sqlite/build_libs.sh"
 fi
 
+# --- DuckDB shared lib for this host -----------------------------------------
+# The DuckDB driver links a prebuilt shared library (not checked in, ~50MB);
+# fetch it so `just check-all`, `just test`, and the duckdb examples link.
+duck_lib="$PROJECT_DIR/bindings/duckdb/lib/linux_amd64/libduckdb.so"
+if [ ! -f "$duck_lib" ]; then
+  echo ">> Fetching DuckDB shared lib"
+  bash "$PROJECT_DIR/bindings/duckdb/fetch_libs.sh" || \
+    echo "   (DuckDB fetch failed — the duckdb driver suite will not link until 'just duckdb-lib' succeeds)"
+fi
+
 echo ">> Toolchain ready: $(odin version 2>/dev/null) | $(just --version 2>/dev/null) | $(sqlite3 --version 2>/dev/null | cut -d' ' -f1) sqlite3"

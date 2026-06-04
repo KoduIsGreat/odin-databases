@@ -10,6 +10,12 @@ bin/
 # Binding/example build artifacts
 bindings/sqlite/example/example
 bindings/sqlite/example/main
+bindings/duckdb/example/example
+bindings/duckdb/example/main
+
+# Prebuilt DuckDB libraries (~50MB each). Fetch per host with
+# bindings/duckdb/fetch_libs.sh (or `just duckdb-lib`); never committed.
+bindings/duckdb/lib/
 
 # Host-built SQLite static libs (the SessionStart hook / build_libs.sh
 # regenerates these per host). darwin_arm64 is checked in intentionally.

@@ -21,6 +21,15 @@ install_dir := env_var_or_default("ODB_INSTALL_DIR", env_var("HOME") / ".local" 
 openssl_lib_dir := env_var_or_default("OPENSSL_LIB_DIR", if os() == "macos" { "/opt/homebrew/opt/openssl@3/lib" } else { "" })
 pg_tls_flags := "-define:DATABASE_PG_TLS=true" + if openssl_lib_dir != "" { " -extra-linker-flags:-L" + openssl_lib_dir } else { "" }
 
+# The DuckDB driver links a prebuilt shared library (fetched with `just
+# duckdb-lib`). It is not checked in, and the dynamic loader must find it at run
+# time — so build/test/run recipes prefix the command with the right *_LIBRARY_PATH
+# pointing at bindings/duckdb/lib/<os>_<arch>/.
+duck_os  := if os() == "macos" { "darwin" } else { os() }
+duck_arch := if arch() == "x86_64" { "amd64" } else if arch() == "aarch64" { "arm64" } else if arch() == "arm64" { "arm64" } else { arch() }
+duck_lib_dir := justfile_directory() / "bindings" / "duckdb" / "lib" / (duck_os + "_" + duck_arch)
+duck_ld := if os() == "macos" { "DYLD_LIBRARY_PATH=" + duck_lib_dir } else { "LD_LIBRARY_PATH=" + duck_lib_dir }
+
 # Default: list available recipes.
 default:
     @just --list
@@ -58,6 +67,8 @@ check-all:
     odin check drivers/sqlite -no-entry-point {{coll}}
     odin check drivers/postgres -no-entry-point {{coll}}
     odin check drivers/postgres -no-entry-point {{coll}} -define:DATABASE_PG_TLS=true
+    odin check drivers/duckdb -no-entry-point {{coll}}
+    odin check bindings/duckdb/duckdb -no-entry-point {{coll}}
     odin check drivers/mock -no-entry-point {{coll}}
     odin check tools/scangen {{coll}}
     odin check tools/schemagen {{coll}}
@@ -72,6 +83,7 @@ test:
     odin test drivers/mock {{coll}}
     odin test drivers/sqlite {{coll}}
     odin test drivers/postgres {{coll}}
+    {{duck_ld}} odin test drivers/duckdb {{coll}}
     odin test sqlbuilder {{coll}}
     odin test migrate {{coll}}
     odin test tools/migragen {{coll}}
@@ -245,6 +257,23 @@ sqlite-lib:
 # Run the raw-bindings smoke test (verifies the static lib + bindings link).
 bindings-example:
     cd bindings/sqlite/example && odin run .
+
+# --- DuckDB bindings + driver -------------------------------------------------
+
+# Fetch the prebuilt DuckDB shared library for this host into
+# bindings/duckdb/lib/<os>_<arch>/ (not checked in; ~50MB). Pin a release with
+# `just duckdb-lib v1.1.3`.
+duckdb-lib version="":
+    bash bindings/duckdb/fetch_libs.sh {{version}}
+
+# Run the DuckDB driver's test suite (links + loads the prebuilt shared lib).
+# Run `just duckdb-lib` first if the library isn't present.
+test-duckdb:
+    {{duck_ld}} odin test drivers/duckdb {{coll}}
+
+# Run the raw DuckDB bindings smoke test (verifies the shared lib + bindings link).
+duckdb-bindings-example:
+    cd bindings/duckdb/example && {{duck_ld}} odin run .
 
 # --- Maintenance --------------------------------------------------------------
 

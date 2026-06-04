@@ -15,7 +15,8 @@ A database access toolkit for [Odin](https://odin-lang.org):
   database introspection.
 - **drivers** — a SQLite driver (JSON1/FTS5/R*Tree, loadable extensions), a
   pure-Odin **PostgreSQL** driver (wire protocol, no libpq; SCRAM-SHA-256, with
-  opt-in TLS), and an expectation-based **mock** driver for tests.
+  opt-in TLS), a **preliminary DuckDB** driver (over DuckDB's C API), and an
+  expectation-based **mock** driver for tests.
 
 See [`DESIGN.md`](DESIGN.md) for the rationale behind each piece and
 [`examples/`](examples) for runnable, focused examples.
@@ -33,6 +34,18 @@ See [`DESIGN.md`](DESIGN.md) for the rationale behind each piece and
 
 `sqlite3` (the CLI) is only needed if you use schemagen's database-introspection
 mode.
+
+- For the DuckDB driver: a prebuilt `libduckdb` shared library for your platform
+  under `bindings/duckdb/lib/<os>_<arch>/`. It is not checked in (~50MB); fetch
+  the official prebuilt one with:
+
+  ```sh
+  bash bindings/duckdb/fetch_libs.sh      # or: just duckdb-lib
+  ```
+
+  The library is linked dynamically, so it must be on the loader path at run
+  time — the `just` recipes set `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` for you.
+  See [`drivers/duckdb`](drivers/duckdb) for the driver's scope and caveats.
 
 ## Installing it in your project
 
@@ -287,10 +300,12 @@ or `$ODB_INSTALL_DIR`); `just uninstall [dir]` removes it.
 | `database:migrate` | `migrate/` | schema-migration runner (`up`/`down`/`to`/`status`) |
 | `database:drivers/sqlite` | `drivers/sqlite/` | SQLite driver |
 | `database:drivers/postgres` | `drivers/postgres/` | pure-Odin PostgreSQL driver ([README](drivers/postgres/README.md)) |
+| `database:drivers/duckdb` | `drivers/duckdb/` | preliminary DuckDB driver (C API) ([README](drivers/duckdb/README.md)) |
 | `database:drivers/mock` | `drivers/mock/` | mock driver for tests |
 | — | `tools/{scangen,schemagen,migragen,migranew}/` | code generators + migration scaffolder |
 | — | `tools/odb/` | unified CLI (`odb <scan\|schema\|migrate-new\|migrate-gen>`) |
 | — | `bindings/sqlite/` | SQLite bindings + static lib |
+| — | `bindings/duckdb/` | DuckDB C-API bindings ([README](bindings/duckdb/README.md)) |
 | — | `examples/` | runnable examples |
 
 ## License
