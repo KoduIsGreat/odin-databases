@@ -424,6 +424,162 @@ test_interval :: proc(t: ^testing.T) {
 	testing.expect_value(t, got.iv.micros, i64(3600) * 1_000_000)
 }
 
+// LIST<INTEGER> -> []i64. Via query_row, so this also exercises the detach
+// clone/free path (the composite tree is deep-copied to survive detachment).
+@(test)
+test_list_int :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT [10, 20, 30]::INTEGER[]")
+	defer sql.close_row(&row)
+	xs: []i64
+	testing.expect_value(t, sql.scan(&row, &xs), nil)
+	defer delete(xs)
+	testing.expect_value(t, len(xs), 3)
+	testing.expect_value(t, xs[0], 10)
+	testing.expect_value(t, xs[1], 20)
+	testing.expect_value(t, xs[2], 30)
+}
+
+// LIST<VARCHAR> -> []string: borrowed cell bytes are cloned through the detach
+// copy and again by scan into caller-owned strings.
+@(test)
+test_list_string :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT ['a', 'bb', 'ccc']")
+	defer sql.close_row(&row)
+	ss: []string
+	testing.expect_value(t, sql.scan(&row, &ss), nil)
+	defer {
+		for s in ss {delete(s)}
+		delete(ss)
+	}
+	testing.expect_value(t, len(ss), 3)
+	testing.expect_value(t, ss[1], "bb")
+	testing.expect_value(t, ss[2], "ccc")
+}
+
+// STRUCT -> a matching Odin struct by field name. Scanned through a wrapper
+// field: a lone struct destination would hit scan's reflective struct path
+// (column-name-to-field matching), same as a lone time.Time — so the STRUCT
+// column is aliased to a field name and the inner struct receives the value.
+@(test)
+test_struct_scan :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	Point :: struct {
+		x: i64,
+		y: i64,
+	}
+	Row :: struct {
+		p: Point,
+	}
+	row := sql.query_row(db, "SELECT {'x': 3, 'y': 7} AS p")
+	defer sql.close_row(&row)
+	got: Row
+	testing.expect_value(t, sql.scan(&row, &got), nil)
+	testing.expect_value(t, got.p.x, 3)
+	testing.expect_value(t, got.p.y, 7)
+}
+
+// LIST<STRUCT> -> []struct, over a live (multi-row) result so the per-row tree
+// arena is reset and reused across rows.
+@(test)
+test_list_of_struct :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	Item :: struct {
+		id:   i64,
+		name: string,
+	}
+	rows, e := sql.query(
+		db,
+		"SELECT [{'id': 1, 'name': 'a'}, {'id': 2, 'name': 'bb'}] AS items " +
+		"UNION ALL SELECT [{'id': 3, 'name': 'ccc'}] ORDER BY 1",
+	)
+	testing.expect_value(t, e, nil)
+	defer sql.rows_close(&rows)
+
+	total := 0
+	for sql.next(&rows) {
+		items: []Item
+		testing.expect_value(t, sql.scan(&rows, &items), nil)
+		for it in items {
+			total += int(it.id)
+			delete(it.name)
+		}
+		delete(items)
+	}
+	testing.expect_value(t, sql.rows_err(&rows), nil)
+	testing.expect_value(t, total, 6) // 1 + 2 + 3
+}
+
+// MAP -> []struct{key, value}.
+@(test)
+test_map_scan :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	KV :: struct {
+		key:   string,
+		value: i64,
+	}
+	row := sql.query_row(db, "SELECT MAP {'a': 1, 'b': 2}")
+	defer sql.close_row(&row)
+	kvs: []KV
+	testing.expect_value(t, sql.scan(&row, &kvs), nil)
+	defer {
+		for kv in kvs {delete(kv.key)}
+		delete(kvs)
+	}
+	testing.expect_value(t, len(kvs), 2)
+	testing.expect_value(t, kvs[0].key, "a")
+	testing.expect_value(t, kvs[0].value, 1)
+	testing.expect_value(t, kvs[1].key, "b")
+	testing.expect_value(t, kvs[1].value, 2)
+}
+
+// ARRAY (fixed size) -> [N]T.
+@(test)
+test_array_scan :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT [1, 2, 3]::INTEGER[3]")
+	defer sql.close_row(&row)
+	arr: [3]i64
+	testing.expect_value(t, sql.scan(&row, &arr), nil)
+	testing.expect_value(t, arr[0], 1)
+	testing.expect_value(t, arr[1], 2)
+	testing.expect_value(t, arr[2], 3)
+}
+
+// Nested LIST<LIST<INTEGER>> -> [][]i64.
+@(test)
+test_nested_list :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT [[1, 2], [3]]::INTEGER[][]")
+	defer sql.close_row(&row)
+	xs: [][]i64
+	testing.expect_value(t, sql.scan(&row, &xs), nil)
+	defer {
+		for inner in xs {delete(inner)}
+		delete(xs)
+	}
+	testing.expect_value(t, len(xs), 2)
+	testing.expect_value(t, len(xs[0]), 2)
+	testing.expect_value(t, xs[0][1], 2)
+	testing.expect_value(t, len(xs[1]), 1)
+	testing.expect_value(t, xs[1][0], 3)
+}
+
 @(test)
 test_query_error :: proc(t: ^testing.T) {
 	db := open_mem(t)

@@ -67,6 +67,12 @@ just run-duckdb-example    # the examples/duckdb demo
     `TIMESTAMP_TZ` / `TIME_TZ` fold the zone offset into the UTC instant.
   - `UUID` → canonical `string` (or `[16]u8`); `ENUM` → its label `string`;
     `INTERVAL` → a readable `string` or the typed `duckdb.Interval`.
+  - Composites scan structurally into native Odin types: `LIST` → `[]T`,
+    `ARRAY` → `[N]T`, `STRUCT` → a struct matched by field name, `MAP` →
+    `[]struct{key, value}`, nested arbitrarily. NULLs inside a composite scan as
+    the destination's zero value. (Scan a top-level `STRUCT` column through a
+    wrapper field — a lone struct destination hits scan's reflective
+    column-name-matching path, the same caveat as a lone `time.Time`.)
 - Multi-statement parameterless `exec` runs every `;`-separated statement, so
   DDL / migration scripts work.
 
@@ -78,11 +84,14 @@ This is an early driver; the rough edges are deliberate, not hidden:
   materialize the whole result; `fetch_chunk` then walks that buffer, so large
   result sets are held fully in memory. A future streaming exec would reuse the
   same chunk reader.
-- **Composite types are not yet structured.** `LIST`, `STRUCT`, `MAP`,
-  `ARRAY`, and `UNION` can be queried, but scanning such a column fails with a
-  type mismatch (structured scan into `[]T` / structs is in progress). `BIT` and
-  `VARINT` are likewise unsupported. (Binding a `DECIMAL`/`UUID`/`INTERVAL` as a
-  parameter isn't supported either — pass a string and `CAST`.)
+- **A few types remain unsupported on scan:** `UNION`, `BIT`, and `VARINT`
+  (scanning such a column fails with a type mismatch). `Maybe(T)` is not yet
+  honored for elements *inside* a composite — a NULL element scans as the zero
+  value rather than `nil`. (Binding a `DECIMAL`/`UUID`/`INTERVAL`/composite as a
+  parameter isn't supported either — pass a string/literal and `CAST`.)
+- **Scanned composite memory is caller-owned.** A scanned `[]T` (and any nested
+  slices/strings within it) is allocated with `context.allocator`; free it
+  yourself, like any scanned string.
 - **`last_insert_id` is always 0** — DuckDB has no rowid / last-insert concept.
   Use `RETURNING` (works through the normal query path).
 - **Isolation levels are ignored.** `begin` starts DuckDB's snapshot-isolated

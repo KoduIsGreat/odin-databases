@@ -129,10 +129,17 @@ rows_close :: proc(rows: ^Rows) -> Error {
 	}
 	// A detached Row owns its cloned column-name strings (see detach_rows). For
 	// a live Rows the names are borrowed from the driver, which frees them in
-	// rows_close above, so only free them here when detached.
+	// rows_close above, so only free them here when detached. The same applies to
+	// any deep-copied Custom_Value payloads (e.g. composites) cloned at detach.
 	if rows._detached {
 		for i in 0 ..< len(rows._cols) {
 			delete(rows._cols[i].name, rows.allocator)
+		}
+		for &val in rows._values {
+			#partial switch &v in val {
+			case Custom_Value:
+				if v.free != nil {v.free(&v.storage, rows.allocator)}
+			}
 		}
 	}
 	if rows._values != nil {
@@ -175,6 +182,10 @@ detach_rows :: proc(rows: ^Rows) -> Error {
 			cloned := make([]byte, len(v))
 			copy(cloned, v)
 			v = cloned
+		case Custom_Value:
+			// Borrowed payloads (e.g. composites pointing into the driver result)
+			// must be deep-copied before the driver frees the result below.
+			if v.clone != nil {v.clone(&v.storage, context.allocator)}
 		}
 	}
 	rows._detached = true

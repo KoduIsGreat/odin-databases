@@ -47,9 +47,19 @@ Value :: union {
 // the destination pointer, and an allocator to use for any allocation it must
 // make (e.g. rendering to a string). Allocated results are owned by the caller,
 // matching scan()'s clone-on-read semantics.
+//
+// `clone` and `free` are optional and handle payloads that reference external
+// (borrowed) memory — e.g. a composite cell pointing into the driver's result
+// buffer. When a Row is detached (query_row releases the connection before the
+// caller scans), the core calls `clone` to deep-copy the payload into owned
+// memory so it survives, and `free` to release that copy when the Row closes.
+// Self-contained payloads that live entirely inside `storage` (DECIMAL, UUID,
+// INTERVAL) leave both nil — copying the struct copies them.
 Custom_Value :: struct {
 	storage: [2]i128,
 	convert: proc(payload: rawptr, dest_type: typeid, dest: rawptr, allocator: mem.Allocator) -> bool,
+	clone:   proc(storage: ^[2]i128, allocator: mem.Allocator),
+	free:    proc(storage: ^[2]i128, allocator: mem.Allocator),
 }
 
 // Null represents a SQL NULL value with an associated type hint

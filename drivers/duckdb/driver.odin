@@ -14,11 +14,10 @@
 //   - Streaming results. duckdb_query / execute_prepared materialize the whole
 //     result; fetch_chunk then walks that buffer. Large result sets are held
 //     fully in memory (a future streaming exec would reuse this same reader).
-//   - Composite/exotic types (LIST, STRUCT, MAP, ARRAY, ENUM, UUID, INTERVAL,
-//     BIT, VARINT, UNION) are not modeled: a column of such a type can be
-//     queried, but scanning it fails with a type mismatch rather than silently
-//     returning an approximate string. Structured support will reuse the same
-//     Custom_Value mechanism DECIMAL uses.
+//   - UNION, BIT, and VARINT are not modeled: a column of such a type can be
+//     queried, but scanning it fails with a type mismatch. (LIST/ARRAY/STRUCT/
+//     MAP scan structurally into []T / [N]T / structs / []struct{key,value};
+//     ENUM/UUID/INTERVAL have native mappings.)
 //   - last_insert_id is always 0 (DuckDB has no rowid/last-insert concept).
 //   - Isolation levels are ignored: BEGIN starts DuckDB's snapshot-isolated tx.
 //
@@ -28,6 +27,7 @@
 // state across a pool, call `sql.set_max_open_conns(db, 1)` or use a file DSN.
 package duckdb
 
+import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
@@ -105,8 +105,13 @@ Duck_Rows :: struct {
 	chunk:      ddb.Data_Chunk,
 	chunk_size: u64,
 	chunk_row:  u64, // next row index within the current chunk
+	vectors:    []ddb.Vector, // per-column vector handle for the current chunk
 	vdata:      []rawptr, // vector_get_data per column, for the current chunk
 	vvalid:     []^u64, // vector_get_validity per column, for the current chunk
+
+	// Per-row scratch for composite (LIST/STRUCT/MAP/ARRAY) cells: their decoded
+	// trees are built here and freed wholesale on the next rows_next / close.
+	tree_arena: mem.Dynamic_Arena,
 	done:       bool,
 }
 
@@ -435,7 +440,28 @@ read_cell :: proc(rows: ^Duck_Rows, col: int, row: u64, dest: ^drv.Value) {
 		dest^ = drv.Null{}
 		return
 	}
-	read_vector_cell(rows.vdata[col], rows.meta[col], row, dest)
+	m := rows.meta[col]
+	#partial switch m.type {
+	case .LIST, .ARRAY, .STRUCT, .MAP:
+		dest^ = build_composite_cell(rows, rows.vectors[col], m.logical, row)
+		return
+	}
+	read_vector_cell(rows.vdata[col], m, row, dest)
+}
+
+// enum_index reads an ENUM's dictionary index from its physical storage int.
+@(private)
+enum_index :: proc(phys: ddb.Type, data: rawptr, row: u64) -> u64 {
+	#partial switch phys {
+	case .UTINYINT:
+		return u64(([^]u8)(data)[row])
+	case .USMALLINT:
+		return u64(([^]u16)(data)[row])
+	case .UINTEGER:
+		return u64(([^]u32)(data)[row])
+	case:
+		return 0
+	}
 }
 
 // read_vector_cell decodes one value from a vector's data pointer at `row`,
@@ -483,15 +509,7 @@ read_vector_cell :: proc(data: rawptr, m: Col_Meta, row: u64, dest: ^drv.Value) 
 	case .INTERVAL:
 		dest^ = make_interval_cell(([^]ddb.Interval)(data)[row])
 	case .ENUM:
-		idx: u64
-		#partial switch m.phys_type {
-		case .UTINYINT:
-			idx = u64(([^]u8)(data)[row])
-		case .USMALLINT:
-			idx = u64(([^]u16)(data)[row])
-		case .UINTEGER:
-			idx = u64(([^]u32)(data)[row])
-		}
+		idx := enum_index(m.phys_type, data, row)
 		// Labels are owned by the column (cloned at make_rows), so this borrow is
 		// valid until close; scan() clones it like any other string.
 		dest^ = m.enum_dict[idx] if int(idx) < len(m.enum_dict) else drv.Null{}
@@ -523,6 +541,336 @@ read_vector_cell :: proc(data: rawptr, m: Col_Meta, row: u64, dest: ^drv.Value) 
 	}
 }
 
+// --- Composite types (LIST / ARRAY / STRUCT / MAP) — structured scan ---
+//
+// A composite cell is decoded into an owned Node tree, then mapped into the
+// caller's Odin destination type at scan time (the destination shape — []T,
+// [N]T, a struct, []struct{key,value} — is only known then, via reflection).
+//
+// The tree is built in the Rows' per-row arena (freed wholesale each rows_next).
+// For a live Rows that's enough: scan happens before the next rows_next. For a
+// detached Row (query_row), the driver result is freed before scan, so the core
+// calls composite_clone to deep-copy the tree into a dedicated owned arena, and
+// composite_free to release it. (See drv.Custom_Value's clone/free.)
+
+@(private)
+Node_Kind :: enum {
+	Scalar,
+	List, // LIST / ARRAY (children are elements); MAP (children are key/value structs)
+	Struct, // STRUCT (children are field values, named by field_names)
+}
+
+@(private)
+Node :: struct {
+	kind:        Node_Kind,
+	scalar:      drv.Value, // when .Scalar
+	children:    []Node, // when .List / .Struct
+	field_names: []string, // when .Struct
+}
+
+@(private)
+Composite_Payload :: struct {
+	root:  ^Node,
+	arena: ^mem.Dynamic_Arena, // non-nil only for a cloned (detached) tree it owns
+}
+#assert(size_of(Composite_Payload) <= size_of(drv.Custom_Value{}.storage))
+
+// build_node recursively decodes the value at (vector, row) into an owned tree
+// using allocator `a`. Scalar leaves borrow VARCHAR/BLOB bytes from the chunk
+// (cloned later by scan or composite_clone).
+@(private)
+build_node :: proc(vec: ddb.Vector, lt: ddb.Logical_Type, row: u64, a: mem.Allocator) -> Node {
+	if v := ddb.vector_get_validity(vec); v != nil && !ddb.validity_row_is_valid(v, ddb.Idx_T(row)) {
+		return Node{kind = .Scalar, scalar = drv.Null{}}
+	}
+	t := ddb.get_type_id(lt)
+	#partial switch t {
+	case .LIST, .MAP:
+		// MAP is physically LIST<STRUCT(key, value)>; list_type_child_type accepts both.
+		child_vec := ddb.list_vector_get_child(vec)
+		child_lt := ddb.list_type_child_type(lt)
+		defer ddb.destroy_logical_type(&child_lt)
+		e := ([^]ddb.List_Entry)(ddb.vector_get_data(vec))[row]
+		kids := make([]Node, int(e.length), a)
+		for k in 0 ..< e.length {
+			kids[k] = build_node(child_vec, child_lt, e.offset + k, a)
+		}
+		return Node{kind = .List, children = kids}
+	case .ARRAY:
+		size := u64(ddb.array_type_array_size(lt))
+		child_vec := ddb.array_vector_get_child(vec)
+		child_lt := ddb.array_type_child_type(lt)
+		defer ddb.destroy_logical_type(&child_lt)
+		base := row * size
+		kids := make([]Node, int(size), a)
+		for k in 0 ..< size {
+			kids[k] = build_node(child_vec, child_lt, base + k, a)
+		}
+		return Node{kind = .List, children = kids}
+	case .STRUCT:
+		n := int(ddb.struct_type_child_count(lt))
+		kids := make([]Node, n, a)
+		names := make([]string, n, a)
+		for c in 0 ..< n {
+			ci := ddb.Idx_T(c)
+			cname := ddb.struct_type_child_name(lt, ci)
+			names[c] = strings.clone(string(cname), a)
+			ddb.free(rawptr(cname)) // struct_type_child_name must be duckdb_free'd
+			clt := ddb.struct_type_child_type(lt, ci)
+			kids[c] = build_node(ddb.struct_vector_get_child(vec, ci), clt, row, a)
+			ddb.destroy_logical_type(&clt)
+		}
+		return Node{kind = .Struct, children = kids, field_names = names}
+	case .ENUM:
+		idx := enum_index(ddb.enum_internal_type(lt), ddb.vector_get_data(vec), row)
+		lbl := ddb.enum_dictionary_value(lt, ddb.Idx_T(idx))
+		s := strings.clone(string(lbl), a)
+		ddb.free(rawptr(lbl)) // enum_dictionary_value must be duckdb_free'd
+		return Node{kind = .Scalar, scalar = s}
+	case:
+		m := Col_Meta {
+			type = t,
+		}
+		if t == .DECIMAL {
+			m.dec_scale = ddb.decimal_scale(lt)
+			m.phys_type = ddb.decimal_internal_type(lt)
+		}
+		val: drv.Value
+		read_vector_cell(ddb.vector_get_data(vec), m, row, &val)
+		return Node{kind = .Scalar, scalar = val}
+	}
+}
+
+@(private)
+build_composite_cell :: proc(
+	rows: ^Duck_Rows,
+	vec: ddb.Vector,
+	lt: ddb.Logical_Type,
+	row: u64,
+) -> drv.Custom_Value {
+	a := mem.dynamic_arena_allocator(&rows.tree_arena)
+	root := new(Node, a)
+	root^ = build_node(vec, lt, row, a)
+	cv: drv.Custom_Value
+	p := (^Composite_Payload)(&cv.storage)
+	p.root = root
+	cv.convert = composite_convert
+	cv.clone = composite_clone
+	cv.free = composite_free
+	return cv
+}
+
+@(private)
+composite_convert :: proc(payload: rawptr, dest_type: typeid, dest: rawptr, allocator: mem.Allocator) -> bool {
+	return map_node((^Composite_Payload)(payload).root^, dest_type, dest, allocator)
+}
+
+@(private)
+composite_clone :: proc(storage: ^[2]i128, allocator: mem.Allocator) {
+	p := (^Composite_Payload)(storage)
+	arena := new(mem.Dynamic_Arena, allocator)
+	mem.dynamic_arena_init(arena, block_allocator = allocator, array_allocator = allocator)
+	a := mem.dynamic_arena_allocator(arena)
+	root := new(Node, a)
+	root^ = clone_node(p.root^, a)
+	p.root = root
+	p.arena = arena
+}
+
+@(private)
+composite_free :: proc(storage: ^[2]i128, allocator: mem.Allocator) {
+	p := (^Composite_Payload)(storage)
+	if p.arena != nil {
+		owner := p.arena.block_allocator
+		mem.dynamic_arena_destroy(p.arena)
+		free(p.arena, owner)
+		p.arena = nil
+	}
+}
+
+// clone_node deep-copies a Node tree into allocator `a`, including borrowed
+// string/[]byte scalar leaves, so the copy outlives the driver result.
+@(private)
+clone_node :: proc(n: Node, a: mem.Allocator) -> Node {
+	out := n
+	if n.kind == .Scalar {
+		#partial switch v in n.scalar {
+		case string:
+			out.scalar = strings.clone(v, a)
+		case []byte:
+			b := make([]byte, len(v), a)
+			copy(b, v)
+			out.scalar = b
+		}
+		return out
+	}
+	if n.children != nil {
+		out.children = make([]Node, len(n.children), a)
+		for i in 0 ..< len(n.children) {
+			out.children[i] = clone_node(n.children[i], a)
+		}
+	}
+	if n.field_names != nil {
+		out.field_names = make([]string, len(n.field_names), a)
+		for i in 0 ..< len(n.field_names) {
+			out.field_names[i] = strings.clone(n.field_names[i], a)
+		}
+	}
+	return out
+}
+
+// map_node materializes a Node tree into the destination of type `tid`:
+//   LIST   -> []T or [N]T   STRUCT -> a struct matched by field name
+//   MAP    -> []struct{key, value}   scalar -> the scalar coercions of set_scalar
+// NULLs within a composite scan as the destination's zero value. Returns false
+// on a shape/type mismatch.
+@(private)
+map_node :: proc(node: Node, tid: typeid, dest: rawptr, a: mem.Allocator) -> bool {
+	// Scalars (including []byte BLOB, time.Time, the typed exotics) go straight to
+	// the scalar coercions, even when their Odin type is a slice/array/struct.
+	if node.kind == .Scalar {
+		return set_scalar(node.scalar, tid, dest, a)
+	}
+	ti := runtime.type_info_base(type_info_of(tid))
+	#partial switch info in ti.variant {
+	case runtime.Type_Info_Slice:
+		if node.kind != .List {return false}
+		count := len(node.children)
+		if count == 0 {
+			(^runtime.Raw_Slice)(dest)^ = runtime.Raw_Slice{nil, 0}
+			return true
+		}
+		data, err := mem.alloc(count * info.elem_size, info.elem.align, a)
+		if err != nil {return false}
+		for i in 0 ..< count {
+			ep := rawptr(uintptr(data) + uintptr(i * info.elem_size))
+			if !map_node(node.children[i], info.elem.id, ep, a) {return false}
+		}
+		(^runtime.Raw_Slice)(dest)^ = runtime.Raw_Slice{data, count}
+		return true
+	case runtime.Type_Info_Array:
+		if node.kind != .List {return false}
+		n := min(info.count, len(node.children))
+		for i in 0 ..< n {
+			ep := rawptr(uintptr(dest) + uintptr(i * info.elem_size))
+			if !map_node(node.children[i], info.elem.id, ep, a) {return false}
+		}
+		return true
+	case runtime.Type_Info_Struct:
+		if node.kind != .Struct {return false}
+		for fi in 0 ..< int(info.field_count) {
+			for ci in 0 ..< len(node.field_names) {
+				if node.field_names[ci] == info.names[fi] {
+					fptr := rawptr(uintptr(dest) + info.offsets[fi])
+					if !map_node(node.children[ci], info.types[fi].id, fptr, a) {return false}
+					break
+				}
+			}
+		}
+		return true
+	case:
+		return false
+	}
+}
+
+// set_scalar writes a scalar drv.Value into a destination of type `tid`,
+// mirroring the core scan layer's coercions (it runs inside the driver because
+// the core only sees the top-level composite cell). Strings/blobs are cloned
+// into `a`; a nested Custom_Value (e.g. DECIMAL in a list) delegates to its
+// convert.
+@(private)
+set_scalar :: proc(val: drv.Value, tid: typeid, dest: rawptr, a: mem.Allocator) -> bool {
+	switch v in val {
+	case bool:
+		if tid != bool {return false}
+		(^bool)(dest)^ = v
+	case i64:
+		switch tid {
+		case i64:
+			(^i64)(dest)^ = v
+		case int:
+			(^int)(dest)^ = int(v)
+		case i32:
+			(^i32)(dest)^ = i32(v)
+		case i16:
+			(^i16)(dest)^ = i16(v)
+		case i8:
+			(^i8)(dest)^ = i8(v)
+		case u64:
+			(^u64)(dest)^ = u64(v)
+		case u32:
+			(^u32)(dest)^ = u32(v)
+		case u16:
+			(^u16)(dest)^ = u16(v)
+		case u8:
+			(^u8)(dest)^ = u8(v)
+		case f64:
+			(^f64)(dest)^ = f64(v)
+		case f32:
+			(^f32)(dest)^ = f32(v)
+		case bool:
+			(^bool)(dest)^ = v != 0
+		case:
+			return false
+		}
+	case i128:
+		switch tid {
+		case i128:
+			(^i128)(dest)^ = v
+		case u128:
+			(^u128)(dest)^ = u128(v)
+		case i64:
+			(^i64)(dest)^ = i64(v)
+		case u64:
+			(^u64)(dest)^ = u64(v)
+		case f64:
+			(^f64)(dest)^ = f64(v)
+		case:
+			return false
+		}
+	case u128:
+		switch tid {
+		case u128:
+			(^u128)(dest)^ = v
+		case i128:
+			(^i128)(dest)^ = i128(v)
+		case u64:
+			(^u64)(dest)^ = u64(v)
+		case f64:
+			(^f64)(dest)^ = f64(v)
+		case:
+			return false
+		}
+	case f64:
+		switch tid {
+		case f64:
+			(^f64)(dest)^ = v
+		case f32:
+			(^f32)(dest)^ = f32(v)
+		case:
+			return false
+		}
+	case string:
+		if tid != string {return false}
+		(^string)(dest)^ = strings.clone(v, a)
+	case []byte:
+		if tid != []byte {return false}
+		b := make([]byte, len(v), a)
+		copy(b, v)
+		(^[]byte)(dest)^ = b
+	case time.Time:
+		if tid != time.Time {return false}
+		(^time.Time)(dest)^ = v
+	case drv.Custom_Value:
+		if v.convert == nil {return false}
+		cv := v
+		return v.convert(&cv.storage, tid, dest, a)
+	case drv.Null:
+	// Leave the destination at its zero value.
+	}
+	return true
+}
+
 // Build a Rows from an owned, materialized result, caching per-column schema.
 @(private)
 make_rows :: proc(conn: ^Duck_Conn, res: ddb.Result) -> ^Duck_Rows {
@@ -534,8 +882,10 @@ make_rows :: proc(conn: ^Duck_Conn, res: ddb.Result) -> ^Duck_Rows {
 
 	rows.cols = make([]drv.Column, rows.col_count, a)
 	rows.meta = make([]Col_Meta, rows.col_count, a)
+	rows.vectors = make([]ddb.Vector, rows.col_count, a)
 	rows.vdata = make([]rawptr, rows.col_count, a)
 	rows.vvalid = make([]^u64, rows.col_count, a)
+	mem.dynamic_arena_init(&rows.tree_arena, block_allocator = a, array_allocator = a)
 
 	for i in 0 ..< rows.col_count {
 		ci := ddb.Idx_T(i)
@@ -607,6 +957,7 @@ load_next_chunk :: proc(rows: ^Duck_Rows) -> bool {
 	rows.chunk_row = 0
 	for i in 0 ..< rows.col_count {
 		v := ddb.data_chunk_get_vector(c, ddb.Idx_T(i))
+		rows.vectors[i] = v
 		rows.vdata[i] = ddb.vector_get_data(v)
 		rows.vvalid[i] = ddb.vector_get_validity(v)
 	}
@@ -855,6 +1206,10 @@ duckdb_rows_columns :: proc(handle: drv.Rows_Handle) -> []drv.Column {
 duckdb_rows_next :: proc(handle: drv.Rows_Handle, dest: []drv.Value) -> bool {
 	rows := cast(^Duck_Rows)handle
 	if rows.done {return false}
+	// Release the previous row's composite trees (borrowed values are only valid
+	// until this call). Borrowed string/blob cells live in the chunk and are
+	// released when a chunk boundary is crossed below.
+	mem.dynamic_arena_free_all(&rows.tree_arena)
 	// Advance to the next chunk when the current one is exhausted (this also
 	// frees the previous chunk, invalidating its borrowed string/blob cells —
 	// the borrowed-value contract only promises validity until this call).
@@ -887,6 +1242,7 @@ duckdb_rows_close :: proc(handle: drv.Rows_Handle) -> drv.Error {
 	a := rows.conn.allocator
 
 	if rows.chunk != nil {ddb.destroy_data_chunk(&rows.chunk)}
+	mem.dynamic_arena_destroy(&rows.tree_arena)
 	for c in rows.cols {
 		delete(c.name, a)
 	}
@@ -897,6 +1253,7 @@ duckdb_rows_close :: proc(handle: drv.Rows_Handle) -> drv.Error {
 	}
 	delete(rows.cols, a)
 	delete(rows.meta, a)
+	delete(rows.vectors, a)
 	delete(rows.vdata, a)
 	delete(rows.vvalid, a)
 	ddb.destroy_result(&rows.res)
