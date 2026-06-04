@@ -65,6 +65,8 @@ just run-duckdb-example    # the examples/duckdb demo
   - `TIMESTAMP` / `TIMESTAMP_S` / `_MS` / `_NS` / `TIMESTAMP_TZ` / `DATE` /
     `TIME` / `TIME_TZ` → `time.Time`, each decoded at its correct unit;
     `TIMESTAMP_TZ` / `TIME_TZ` fold the zone offset into the UTC instant.
+  - `UUID` → canonical `string` (or `[16]u8`); `ENUM` → its label `string`;
+    `INTERVAL` → a readable `string` or the typed `duckdb.Interval`.
 - Multi-statement parameterless `exec` runs every `;`-separated statement, so
   DDL / migration scripts work.
 
@@ -76,11 +78,10 @@ This is an early driver; the rough edges are deliberate, not hidden:
   materialize the whole result; `fetch_chunk` then walks that buffer, so large
   result sets are held fully in memory. A future streaming exec would reuse the
   same chunk reader.
-- **Composite / exotic types are unsupported.** `LIST`, `STRUCT`, `MAP`,
-  `ARRAY`, `ENUM`, `UUID`, `INTERVAL`, `BIT`, `VARINT`, and `UNION` can be
-  queried, but scanning such a column fails with a type mismatch rather than
-  silently returning an approximate string. Structured support will reuse the
-  same `Custom_Value` mechanism `DECIMAL` uses. (Binding a `DECIMAL` as a
+- **Composite types are not yet structured.** `LIST`, `STRUCT`, `MAP`,
+  `ARRAY`, and `UNION` can be queried, but scanning such a column fails with a
+  type mismatch (structured scan into `[]T` / structs is in progress). `BIT` and
+  `VARINT` are likewise unsupported. (Binding a `DECIMAL`/`UUID`/`INTERVAL` as a
   parameter isn't supported either — pass a string and `CAST`.)
 - **`last_insert_id` is always 0** — DuckDB has no rowid / last-insert concept.
   Use `RETURNING` (works through the normal query path).

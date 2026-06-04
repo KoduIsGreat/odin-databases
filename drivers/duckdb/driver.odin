@@ -79,17 +79,22 @@ Duck_Stmt :: struct {
 	conn: ^Duck_Conn,
 }
 
+// Per-column schema cached once at make_rows so the hot read path performs no
+// per-cell metadata lookups.
+Col_Meta :: struct {
+	type:      ddb.Type, // DuckDB type id
+	phys_type: ddb.Type, // physical storage int type for DECIMAL / ENUM
+	dec_scale: u8, // DECIMAL scale
+	enum_dict: []string, // ENUM labels (owned), nil otherwise
+	logical:   ddb.Logical_Type, // kept alive (until close) for composite columns; nil otherwise
+}
+
 Duck_Rows :: struct {
 	res:       ddb.Result, // owned, materialized result (destroyed on close)
 	conn:      ^Duck_Conn,
 	cols:      []drv.Column, // allocated; names cloned into the same allocation block
 	col_count: int,
-
-	// Per-column schema, cached once at make_rows so the hot read path performs
-	// no per-cell metadata lookups.
-	col_types: []ddb.Type, // DuckDB type id per column
-	dec_scale: []u8, // DECIMAL scale per column (0 otherwise)
-	dec_itype: []ddb.Type, // DECIMAL physical storage type per column
+	meta:      []Col_Meta,
 
 	// Current data chunk plus the per-column vector data/validity pointers into
 	// it. Read via the modern duckdb_fetch_chunk path — no per-cell value_* calls
@@ -297,6 +302,102 @@ decimal_to_string :: proc(value: i128, scale: u8, allocator: mem.Allocator) -> s
 	return strings.to_string(b)
 }
 
+// --- UUID (exact, via Custom_Value) ---
+
+// DuckDB stores a UUID as a HUGEINT with the high (sign) bit flipped so values
+// sort correctly. We carry that raw i128 in the cell and undo the flip on read.
+@(private)
+make_uuid_cell :: proc(raw: i128) -> drv.Custom_Value {
+	cv: drv.Custom_Value
+	(^i128)(&cv.storage)^ = raw
+	cv.convert = uuid_convert
+	return cv
+}
+
+@(private)
+uuid_convert :: proc(payload: rawptr, dest_type: typeid, dest: rawptr, allocator: mem.Allocator) -> bool {
+	// Undo DuckDB's sign-bit flip to get the canonical 128-bit value (big-endian).
+	u := transmute(u128)((^i128)(payload)^)
+	u ~= u128(1) << 127
+	bytes: [16]u8
+	for i in 0 ..< 16 {
+		bytes[i] = u8(u >> uint((15 - i) * 8))
+	}
+	switch dest_type {
+	case [16]u8:
+		(^[16]u8)(dest)^ = bytes
+	case string:
+		(^string)(dest)^ = uuid_to_string(bytes, allocator)
+	case:
+		return false
+	}
+	return true
+}
+
+@(private)
+uuid_to_string :: proc(b: [16]u8, allocator: mem.Allocator) -> string {
+	HEX := "0123456789abcdef"
+	// 8-4-4-4-12 with dashes = 36 chars.
+	out := make([]u8, 36, allocator)
+	j := 0
+	for i in 0 ..< 16 {
+		if i == 4 || i == 6 || i == 8 || i == 10 {
+			out[j] = '-';j += 1
+		}
+		out[j] = HEX[b[i] >> 4];j += 1
+		out[j] = HEX[b[i] & 0xf];j += 1
+	}
+	return string(out)
+}
+
+// --- INTERVAL (exact, via Custom_Value) ---
+
+// Interval is DuckDB's INTERVAL exposed as a scannable Odin type: months and
+// days are calendar units kept separate from micros (DuckDB does not normalize
+// between them, since months/days have variable length).
+Interval :: struct {
+	months: i32,
+	days:   i32,
+	micros: i64,
+}
+#assert(size_of(Interval) <= size_of(drv.Custom_Value{}.storage))
+
+@(private)
+make_interval_cell :: proc(iv: ddb.Interval) -> drv.Custom_Value {
+	cv: drv.Custom_Value
+	(^Interval)(&cv.storage)^ = Interval{months = iv.months, days = iv.days, micros = iv.micros}
+	cv.convert = interval_convert
+	return cv
+}
+
+@(private)
+interval_convert :: proc(payload: rawptr, dest_type: typeid, dest: rawptr, allocator: mem.Allocator) -> bool {
+	iv := (^Interval)(payload)
+	switch dest_type {
+	case Interval:
+		(^Interval)(dest)^ = iv^
+	case string:
+		// e.g. "14 months 3 days 01:02:03.5" — months/days only when nonzero.
+		secs := iv.micros / 1_000_000
+		us := iv.micros % 1_000_000
+		hh := secs / 3600
+		mm := (secs % 3600) / 60
+		ss := secs % 60
+		b := strings.builder_make(allocator)
+		if iv.months != 0 {fmt.sbprintf(&b, "%d months ", iv.months)}
+		if iv.days != 0 {fmt.sbprintf(&b, "%d days ", iv.days)}
+		if us != 0 {
+			fmt.sbprintf(&b, "%02d:%02d:%02d.%06d", hh, mm, ss, us)
+		} else {
+			fmt.sbprintf(&b, "%02d:%02d:%02d", hh, mm, ss)
+		}
+		(^string)(dest)^ = strings.to_string(b)
+	case:
+		return false
+	}
+	return true
+}
+
 // --- Unmodeled exotic types ---
 
 // unsupported_cell marks a column type we don't model yet (LIST/STRUCT/ENUM/...).
@@ -334,8 +435,15 @@ read_cell :: proc(rows: ^Duck_Rows, col: int, row: u64, dest: ^drv.Value) {
 		dest^ = drv.Null{}
 		return
 	}
-	data := rows.vdata[col]
-	switch rows.col_types[col] {
+	read_vector_cell(rows.vdata[col], rows.meta[col], row, dest)
+}
+
+// read_vector_cell decodes one value from a vector's data pointer at `row`,
+// given the column's cached metadata. Shared by the top-level reader and (later)
+// the composite tree builder. The caller has already handled NULL/validity.
+@(private)
+read_vector_cell :: proc(data: rawptr, m: Col_Meta, row: u64, dest: ^drv.Value) {
+	switch m.type {
 	case .BOOLEAN:
 		dest^ = ([^]bool)(data)[row]
 	case .TINYINT:
@@ -363,13 +471,30 @@ read_cell :: proc(rows: ^Duck_Rows, col: int, row: u64, dest: ^drv.Value) {
 	case .DOUBLE:
 		dest^ = ([^]f64)(data)[row]
 	case .DECIMAL:
-		dest^ = make_decimal_cell(decimal_raw(rows.dec_itype[col], data, row), rows.dec_scale[col])
+		dest^ = make_decimal_cell(decimal_raw(m.phys_type, data, row), m.dec_scale)
 	case .VARCHAR:
 		dest^ = duck_string(&([^]ddb.String_T)(data)[row])
 	case .BLOB:
 		st := &([^]ddb.String_T)(data)[row]
 		n := int(ddb.string_t_length(st^))
 		dest^ = (([^]byte)(ddb.string_t_data(st)))[:n]
+	case .UUID:
+		dest^ = make_uuid_cell(([^]i128)(data)[row])
+	case .INTERVAL:
+		dest^ = make_interval_cell(([^]ddb.Interval)(data)[row])
+	case .ENUM:
+		idx: u64
+		#partial switch m.phys_type {
+		case .UTINYINT:
+			idx = u64(([^]u8)(data)[row])
+		case .USMALLINT:
+			idx = u64(([^]u16)(data)[row])
+		case .UINTEGER:
+			idx = u64(([^]u32)(data)[row])
+		}
+		// Labels are owned by the column (cloned at make_rows), so this borrow is
+		// valid until close; scan() clones it like any other string.
+		dest^ = m.enum_dict[idx] if int(idx) < len(m.enum_dict) else drv.Null{}
 	case .TIMESTAMP, .TIMESTAMP_TZ:
 		// micros since epoch (TIMESTAMP_TZ stores the UTC instant).
 		dest^ = time.Time{_nsec = ([^]i64)(data)[row] * 1000}
@@ -391,11 +516,10 @@ read_cell :: proc(rows: ^Duck_Rows, col: int, row: u64, dest: ^drv.Value) {
 			(i64(s.time.hour) * 3600 + i64(s.time.min) * 60 + i64(s.time.sec)) * 1_000_000 +
 			i64(s.time.micros)
 		dest^ = time.Time{_nsec = (day_us - i64(s.offset) * 1_000_000) * 1000}
-	case .INVALID, .INTERVAL, .ENUM, .LIST, .STRUCT, .MAP, .ARRAY, .UUID, .UNION, .BIT,
-	     .ANY, .VARINT, .SQLNULL:
-		dest^ = unsupported_cell(rows.col_types[col])
+	case .INVALID, .LIST, .STRUCT, .MAP, .ARRAY, .UNION, .BIT, .ANY, .VARINT, .SQLNULL:
+		dest^ = unsupported_cell(m.type)
 	case:
-		dest^ = unsupported_cell(rows.col_types[col])
+		dest^ = unsupported_cell(m.type)
 	}
 }
 
@@ -409,22 +533,14 @@ make_rows :: proc(conn: ^Duck_Conn, res: ddb.Result) -> ^Duck_Rows {
 	rows.col_count = int(ddb.column_count(&rows.res))
 
 	rows.cols = make([]drv.Column, rows.col_count, a)
-	rows.col_types = make([]ddb.Type, rows.col_count, a)
-	rows.dec_scale = make([]u8, rows.col_count, a)
-	rows.dec_itype = make([]ddb.Type, rows.col_count, a)
+	rows.meta = make([]Col_Meta, rows.col_count, a)
 	rows.vdata = make([]rawptr, rows.col_count, a)
 	rows.vvalid = make([]^u64, rows.col_count, a)
 
 	for i in 0 ..< rows.col_count {
 		ci := ddb.Idx_T(i)
 		t := ddb.column_type(&rows.res, ci)
-		rows.col_types[i] = t
-		if t == .DECIMAL {
-			lt := ddb.column_logical_type(&rows.res, ci)
-			rows.dec_scale[i] = ddb.decimal_scale(lt)
-			rows.dec_itype[i] = ddb.decimal_internal_type(lt)
-			ddb.destroy_logical_type(&lt)
-		}
+		rows.meta[i] = make_col_meta(ddb.column_logical_type(&rows.res, ci), t, a)
 		// column_name's buffer is owned by the result; clone so it outlives it
 		// (and so close can free the result while Column names stay valid).
 		name := strings.clone(string(ddb.column_name(&rows.res, ci)), a)
@@ -435,6 +551,38 @@ make_rows :: proc(conn: ^Duck_Conn, res: ddb.Result) -> ^Duck_Rows {
 		}
 	}
 	return rows
+}
+
+// make_col_meta extracts the read-time metadata for one column from its logical
+// type, taking ownership of `lt` (it is destroyed here unless retained for a
+// composite column, which keeps it alive until rows_close).
+@(private)
+make_col_meta :: proc(lt: ddb.Logical_Type, t: ddb.Type, a: mem.Allocator) -> (m: Col_Meta) {
+	lt := lt
+	m.type = t
+	switch t {
+	case .DECIMAL:
+		m.dec_scale = ddb.decimal_scale(lt)
+		m.phys_type = ddb.decimal_internal_type(lt)
+	case .ENUM:
+		m.phys_type = ddb.enum_internal_type(lt)
+		n := int(ddb.enum_dictionary_size(lt))
+		m.enum_dict = make([]string, n, a)
+		for j in 0 ..< n {
+			m.enum_dict[j] = strings.clone(string(ddb.enum_dictionary_value(lt, ddb.Idx_T(j))), a)
+		}
+	case .INVALID, .BOOLEAN, .TINYINT, .SMALLINT, .INTEGER, .BIGINT, .UTINYINT, .USMALLINT,
+	     .UINTEGER, .UBIGINT, .FLOAT, .DOUBLE, .TIMESTAMP, .DATE, .TIME, .INTERVAL, .HUGEINT,
+	     .UHUGEINT, .VARCHAR, .BLOB, .TIMESTAMP_S, .TIMESTAMP_MS, .TIMESTAMP_NS, .UUID, .BIT,
+	     .TIME_TZ, .TIMESTAMP_TZ, .ANY, .VARINT, .SQLNULL:
+	// Scalar / self-describing: nothing extra to cache.
+	case .LIST, .STRUCT, .MAP, .ARRAY, .UNION:
+		// Composite: retain the logical type so the reader can walk child types.
+		m.logical = lt
+		return
+	}
+	ddb.destroy_logical_type(&lt)
+	return
 }
 
 // load_next_chunk destroys the current chunk and fetches the next, caching each
@@ -742,10 +890,13 @@ duckdb_rows_close :: proc(handle: drv.Rows_Handle) -> drv.Error {
 	for c in rows.cols {
 		delete(c.name, a)
 	}
+	for &m in rows.meta {
+		for s in m.enum_dict {delete(s, a)}
+		delete(m.enum_dict, a)
+		if m.logical != nil {ddb.destroy_logical_type(&m.logical)}
+	}
 	delete(rows.cols, a)
-	delete(rows.col_types, a)
-	delete(rows.dec_scale, a)
-	delete(rows.dec_itype, a)
+	delete(rows.meta, a)
 	delete(rows.vdata, a)
 	delete(rows.vvalid, a)
 	ddb.destroy_result(&rows.res)

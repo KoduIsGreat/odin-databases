@@ -358,6 +358,72 @@ test_multi_chunk :: proc(t: ^testing.T) {
 	testing.expect_value(t, sum, i128(4999) * 5000 / 2)
 }
 
+// UUID scans to its canonical lowercase text (and survives query_row detach,
+// since it's a self-contained Custom_Value).
+@(test)
+test_uuid :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	row := sql.query_row(db, "SELECT '12345678-1234-5678-1234-567812345678'::UUID")
+	defer sql.close_row(&row)
+	s: string
+	testing.expect_value(t, sql.scan(&row, &s), nil)
+	defer delete(s)
+	testing.expect_value(t, s, "12345678-1234-5678-1234-567812345678")
+}
+
+// ENUM scans to its label string, resolved through the cached dictionary.
+@(test)
+test_enum :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	sql.exec(db, "CREATE TYPE mood AS ENUM ('happy', 'sad')")
+	sql.exec(db, "CREATE TABLE e (m mood)")
+	sql.exec(db, "INSERT INTO e VALUES ('sad'), ('happy')")
+
+	rows, e := sql.query(db, "SELECT m FROM e ORDER BY m") // enum orders by definition
+	testing.expect_value(t, e, nil)
+	defer sql.rows_close(&rows)
+
+	got: [dynamic]string
+	defer {
+		for s in got {delete(s)}
+		delete(got)
+	}
+	for sql.next(&rows) {
+		s: string
+		testing.expect_value(t, sql.scan(&rows, &s), nil)
+		append(&got, s)
+	}
+	testing.expect_value(t, len(got), 2)
+	testing.expect_value(t, got[0], "happy")
+	testing.expect_value(t, got[1], "sad")
+}
+
+// INTERVAL scans into the typed duckdb.Interval (months/days/micros kept
+// separate, as DuckDB stores them) and to a readable string.
+@(test)
+test_interval :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	Row :: struct {
+		iv: Interval,
+	}
+	row := sql.query_row(
+		db,
+		"SELECT (INTERVAL '14' MONTH + INTERVAL '3' DAY + INTERVAL '1' HOUR) AS iv",
+	)
+	defer sql.close_row(&row)
+	got: Row
+	testing.expect_value(t, sql.scan(&row, &got), nil)
+	testing.expect_value(t, got.iv.months, 14)
+	testing.expect_value(t, got.iv.days, 3)
+	testing.expect_value(t, got.iv.micros, i64(3600) * 1_000_000)
+}
+
 @(test)
 test_query_error :: proc(t: ^testing.T) {
 	db := open_mem(t)
