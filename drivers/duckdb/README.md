@@ -79,6 +79,23 @@ just run-duckdb-example    # the examples/duckdb demo
     (arbitrary precision).
 - Multi-statement parameterless `exec` runs every `;`-separated statement, so
   DDL / migration scripts work.
+- **Bulk insert via the `Appender`** — DuckDB's fast path for loading many rows,
+  far quicker than row-by-row `INSERT` (driver-specific, beyond the `sql.Driver`
+  contract):
+
+  ```odin
+  conn, _ := sql.checkout(db)
+  defer sql.checkin(&conn)
+  app, _ := duck.appender(&conn, "trades")   // optional schema arg
+  for tr in trades {
+      duck.append_row(&app, tr.id, tr.symbol, tr.price)  // values in column order
+  }
+  duck.appender_close(&app)                  // flushes remaining rows
+  ```
+
+  `append_value` pushes one value; `end_row` / `flush` / `append_default` are
+  available for finer control. The Appender borrows the connection for its
+  lifetime and targets one table.
 
 ## Preliminary — known limitations
 

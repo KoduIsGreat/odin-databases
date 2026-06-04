@@ -709,6 +709,37 @@ test_varint :: proc(t: ^testing.T) {
 	}
 }
 
+// The Appender bulk-loads rows, then flushes on close so they're queryable.
+@(test)
+test_appender :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	conn, ce := sql.checkout(db)
+	testing.expect_value(t, ce, nil)
+	defer sql.checkin(&conn)
+
+	_, te := sql.exec(&conn, "CREATE TABLE trades (id INTEGER, sym VARCHAR, px DOUBLE)")
+	testing.expect_value(t, te, nil)
+
+	app, ae := appender(&conn, "trades")
+	testing.expect_value(t, ae, nil)
+	for i in 1 ..= 3 {
+		e := append_row(&app, i64(i), fmt.tprintf("S%d", i), f64(i) * 1.5)
+		testing.expect_value(t, e, nil)
+	}
+	testing.expect_value(t, appender_close(&app), nil)
+
+	row := sql.query_row(&conn, "SELECT count(*), sum(id), max(px) FROM trades")
+	defer sql.close_row(&row)
+	cnt, total: i64
+	max_px: f64
+	testing.expect_value(t, sql.scan(&row, &cnt, &total, &max_px), nil)
+	testing.expect_value(t, cnt, 3)
+	testing.expect_value(t, total, 6)
+	testing.expect_value(t, max_px, 4.5)
+}
+
 @(test)
 test_query_error :: proc(t: ^testing.T) {
 	db := open_mem(t)
