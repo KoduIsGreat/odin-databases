@@ -882,9 +882,36 @@ map_node :: proc(node: Node, tid: typeid, dest: rawptr, a: mem.Allocator) -> boo
 			}
 		}
 		return true
+	case runtime.Type_Info_Map:
+		// A MAP arrives as a List of STRUCT(key, value) nodes (its physical form).
+		if node.kind != .List {return false}
+		rm := (^runtime.Raw_Map)(dest)
+		if rm.allocator.procedure == nil {rm.allocator = a}
+		kbuf, kerr := mem.alloc(info.key.size, info.key.align, context.temp_allocator)
+		vbuf, verr := mem.alloc(info.value.size, info.value.align, context.temp_allocator)
+		if kerr != nil || verr != nil {return false}
+		for child in node.children {
+			kn, vn := composite_field(child, "key"), composite_field(child, "value")
+			if kn == nil || vn == nil {return false}
+			mem.zero(kbuf, info.key.size)
+			mem.zero(vbuf, info.value.size)
+			if !map_node(kn^, info.key.id, kbuf, a) {return false}
+			if !map_node(vn^, info.value.id, vbuf, a) {return false}
+			runtime.__dynamic_map_set_without_hash(rm, info.map_info, kbuf, vbuf)
+		}
+		return true
 	case:
 		return false
 	}
+}
+
+// composite_field returns the named child of a Struct node, or nil.
+@(private)
+composite_field :: proc(node: Node, name: string) -> ^Node {
+	for i in 0 ..< len(node.field_names) {
+		if node.field_names[i] == name {return &node.children[i]}
+	}
+	return nil
 }
 
 // set_scalar writes a scalar drv.Value into a destination of type `tid`,

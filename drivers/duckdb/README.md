@@ -69,8 +69,8 @@ just run-duckdb-example    # the examples/duckdb demo
     `INTERVAL` → a readable `string` or the typed `duckdb.Interval`.
   - Composites scan structurally into native Odin types: `LIST` → `[]T`,
     `ARRAY` → `[N]T`, `STRUCT` → a struct matched by field name, `MAP` →
-    `[]struct{key, value}`, `UNION` → a struct of its members (inactive ones
-    `None`), nested arbitrarily. A NULL element/field scans as the destination's
+    `map[K]V` or `[]struct{key, value}`, `UNION` → a struct of its members
+    (inactive ones `None`), nested arbitrarily. A NULL element/field scans as the destination's
     zero value, or as `None` into a `Maybe(T)` element. (Scan a top-level
     `STRUCT`/`UNION` column through a wrapper field — a lone struct destination
     hits scan's reflective column-name-matching path, the same caveat as a lone

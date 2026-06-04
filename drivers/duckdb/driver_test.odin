@@ -544,6 +544,29 @@ test_map_scan :: proc(t: ^testing.T) {
 	testing.expect_value(t, kvs[1].value, 2)
 }
 
+// MAP -> map[K]V (in addition to []struct{key, value}).
+@(test)
+test_map_into_map :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	Row :: struct {
+		m: map[string]i64,
+	}
+	row := sql.query_row(db, "SELECT MAP {'a': 1, 'b': 2, 'c': 3} AS m")
+	defer sql.close_row(&row)
+	got: Row
+	testing.expect_value(t, sql.scan(&row, &got), nil)
+	defer {
+		for k in got.m {delete(k)}
+		delete(got.m)
+	}
+	testing.expect_value(t, len(got.m), 3)
+	testing.expect_value(t, got.m["a"], 1)
+	testing.expect_value(t, got.m["b"], 2)
+	testing.expect_value(t, got.m["c"], 3)
+}
+
 // ARRAY (fixed size) -> [N]T.
 @(test)
 test_array_scan :: proc(t: ^testing.T) {
