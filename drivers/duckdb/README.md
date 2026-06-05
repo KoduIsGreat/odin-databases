@@ -103,8 +103,14 @@ This is an early driver; the rough edges are deliberate, not hidden:
 
 - **Eager results (no streaming).** `duckdb_query` / `execute_prepared`
   materialize the whole result; `fetch_chunk` then walks that buffer, so large
-  result sets are held fully in memory. A future streaming exec would reuse the
-  same chunk reader.
+  result sets are held fully in memory. This is **blocked on DuckDB's C API**,
+  not a quick TODO: the only functions that yield a non-materialized result
+  (`duckdb_pending_prepared_streaming` / `duckdb_stream_fetch_chunk`) are
+  deprecated and scheduled for removal, and the supported pending API still
+  materializes. The chunk reader is already incremental, so whenever DuckDB
+  ships a stable streaming path the change is small (swap the execution call and
+  wire up `rows_err`). Until then, bound memory with `LIMIT`/`OFFSET` (or keyset)
+  pagination.
 - **Binding the exotic types as parameters isn't supported** — a
   `DECIMAL`/`UUID`/`INTERVAL`/composite query argument should be passed as a
   string/literal and `CAST`. Reading them back works as above.

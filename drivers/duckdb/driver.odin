@@ -12,8 +12,11 @@
 //
 // PRELIMINARY — what's intentionally not here yet:
 //   - Streaming results. duckdb_query / execute_prepared materialize the whole
-//     result; fetch_chunk then walks that buffer. Large result sets are held
-//     fully in memory (a future streaming exec would reuse this same reader).
+//     result; fetch_chunk then walks that buffer, so large result sets are held
+//     fully in memory. Blocked on DuckDB's C API: the streaming-result functions
+//     (pending_prepared_streaming / stream_fetch_chunk) are deprecated and slated
+//     for removal, and the supported pending API still materializes. The reader
+//     is already incremental, so a stable streaming path would be a small change.
 //   - Composite/exotic types read but cannot be bound as query parameters: pass
 //     a string/literal and CAST. (LIST/ARRAY/STRUCT/MAP/UNION scan structurally
 //     into []T / [N]T / structs / []struct{key,value}; ENUM/UUID/INTERVAL/BIT/
