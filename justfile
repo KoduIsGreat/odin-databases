@@ -303,6 +303,13 @@ run-duckdb-example:
     mkdir -p bin
     {{duck_ld}} odin run examples/duckdb {{coll}} -out:bin/duckdb-example
 
+#Run the DuckDB introspection example (loads the prebuilt shared lib). The generic
+# `run-example` recipe can't set the loader path, so DuckDB gets its own.
+#   just duckdb-lib && just run-duckdb-introspection-example
+run-duckdb-introspection-example:
+    mkdir -p bin
+    {{duck_ld}} odin run examples/duckdb-introspection {{coll}} -out:bin/duckdb-introspection-example
+
 # --- Maintenance --------------------------------------------------------------
 
 # Remove generated source and local build artifacts.

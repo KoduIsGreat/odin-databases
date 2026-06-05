@@ -391,6 +391,17 @@ join :: proc(b: ^Builder, table: $T, on: Predicate, kind := Join_Kind.Inner) {
 	b.join_count += 1
 }
 
+// where_ appends a predicate to the WHERE clause. Successive calls are joined
+// with AND — there is intentionally no `or_where`. To OR conditions (or mix
+// AND/OR), compose a single predicate with or_/and_/not_ and pass it in one
+// call; the combinators parenthesize for you, so precedence is always explicit:
+//
+//   where_(&b, or_(eq(Users.age, 18), gt(Users.age, 65)))
+//   // ... WHERE (users.age = ? OR users.age > ?)
+//
+// A per-call ` OR ` would be a precedence trap: AND binds tighter than OR and
+// the running clause isn't parenthesized, so `a AND b OR c` would silently
+// parse as `(a AND b) OR c`. Routing OR through the combinators avoids that.
 where_ :: proc(b: ^Builder, p: Predicate) {
 	if b.where_count == 0 {
 		strings.write_string(&b.buf, " WHERE ")
