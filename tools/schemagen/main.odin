@@ -20,6 +20,10 @@
 //   - front_end_db_postgres (`-driver=postgres`, `-db=<dsn>`): introspects a
 //     live PostgreSQL server via information_schema. Same emitted output as the
 //     SQLite DB front-end.
+//   - front_end_db_duckdb (`-driver=duckdb`, `-db=<path>`): introspects a DuckDB
+//     database via information_schema. Opt-in (links libduckdb): build with
+//     `-define:SCHEMAGEN_DUCKDB=true`. Composite columns (LIST/STRUCT/MAP/...)
+//     have no single-field mapping and are skipped with a warning.
 //
 // Nullability
 //
@@ -59,6 +63,14 @@ import postgres "database:drivers/postgres"
 import sqlite "database:drivers/sqlite"
 import sql "database:sql"
 
+// DuckDB introspection links libduckdb (a fetched shared lib), so it's opt-in
+// at build time to keep the default schemagen / `odb` CLI free of that runtime
+// dependency. Enable with `-define:SCHEMAGEN_DUCKDB=true` (and set the libduckdb
+// loader path). `duck` is referenced only under `when DUCKDB_INTROSPECT`, so a
+// default build neither links nor requires libduckdb.
+DUCKDB_INTROSPECT :: #config(SCHEMAGEN_DUCKDB, false)
+import duck "database:drivers/duckdb"
+
 // --- Internal schema model (the front-end ⇄ emit seam) ---
 
 Column_Spec :: struct {
@@ -80,10 +92,11 @@ Struct_Mode :: enum {
 }
 
 // Driver_Kind selects which driver the DB front-end introspects through.
-// `-db` carries a file path for Sqlite and a DSN for Postgres.
+// `-db` carries a file path for Sqlite/DuckDB and a DSN for Postgres.
 Driver_Kind :: enum {
 	Sqlite,
 	Postgres,
+	Duckdb,
 }
 
 Schema :: struct {
@@ -586,6 +599,163 @@ front_end_db_postgres :: proc(schema: ^Schema, dsn: string) -> bool {
 	return true
 }
 
+// --- DB front-end (DuckDB) — opt-in, see DUCKDB_INTROSPECT ---
+
+when DUCKDB_INTROSPECT {
+	// duckdb_type_to_odin maps a DuckDB `data_type` (from information_schema, e.g.
+	// INTEGER / BIGINT / HUGEINT / DECIMAL(18,3) / VARCHAR / TIMESTAMP WITH TIME
+	// ZONE / UUID) to the Odin type the driver produces at scan time. ok=false
+	// means the column is a composite (LIST/ARRAY/STRUCT/MAP/UNION) that can't be
+	// represented as a single scalar field — the caller skips it.
+	duckdb_type_to_odin :: proc(dt: string) -> (odin_type: string, ok: bool) {
+		up := strings.to_upper(strings.trim_space(dt), context.temp_allocator)
+		// Composites scan into []T / structs / maps, not a single field — skip.
+		if strings.contains(up, "[") ||
+		   strings.has_prefix(up, "STRUCT(") ||
+		   strings.has_prefix(up, "MAP(") ||
+		   strings.has_prefix(up, "UNION(") {
+			return "", false
+		}
+		switch {
+		case up == "BOOLEAN":
+			return "bool", true
+		case up == "TINYINT", up == "SMALLINT", up == "INTEGER", up == "BIGINT",
+		     up == "UTINYINT", up == "USMALLINT", up == "UINTEGER":
+			return "i64", true
+		case up == "UBIGINT", up == "HUGEINT":
+			return "i128", true
+		case up == "UHUGEINT":
+			return "u128", true
+		case up == "FLOAT", up == "REAL", up == "DOUBLE":
+			return "f64", true
+		case strings.has_prefix(up, "DECIMAL"), strings.has_prefix(up, "NUMERIC"):
+			return "f64", true // driver maps the DECIMAL column type to f64
+		case strings.has_prefix(up, "VARCHAR"), strings.has_prefix(up, "CHAR"),
+		     up == "TEXT", up == "STRING":
+			return "string", true
+		case up == "BLOB", up == "BYTEA":
+			return "[]byte", true
+		case strings.has_prefix(up, "TIMESTAMP"), up == "DATE", strings.has_prefix(up, "TIME"):
+			return "time.Time", true
+		case up == "UUID", up == "INTERVAL", up == "BIT", up == "VARINT":
+			return "string", true
+		case:
+			// ENUM columns report their type name; the driver scans an enum as its
+			// label string. Unknown types likewise fall back to string.
+			return "string", true
+		}
+	}
+
+	list_tables_duckdb :: proc(db: ^sql.DB) -> ([dynamic]string, bool) {
+		out := make([dynamic]string)
+		rows, qerr := sql.query(
+			db,
+			"SELECT table_name FROM information_schema.tables " +
+			"WHERE table_schema = 'main' AND table_type = 'BASE TABLE' " +
+			"ORDER BY table_name",
+		)
+		if qerr != nil {
+			fmt.eprintfln("schemagen: list tables: %v", qerr)
+			return out, false
+		}
+		defer sql.rows_close(&rows)
+
+		for sql.next(&rows) {
+			if s, ok := sql.row_value(&rows, 0).(string); ok {
+				append(&out, strings.clone(s))
+			}
+		}
+		if rerr := sql.rows_err(&rows); rerr != nil {
+			fmt.eprintfln("schemagen: list tables: %v", rerr)
+			return out, false
+		}
+		return out, true
+	}
+
+	front_end_db_duckdb :: proc(schema: ^Schema, db_path: string) -> bool {
+		db, oerr := sql.open(&duck.driver, db_path)
+		if oerr != nil {
+			fmt.eprintfln("schemagen: open duckdb %q: %v", db_path, oerr)
+			return false
+		}
+		defer sql.close(db)
+		// Pin one connection: a pooled :memory: DSN otherwise gives each query its
+		// own isolated database (and a single connection keeps file DBs simple).
+		sql.set_max_open_conns(db, 1)
+
+		schema.emit_structs = schema.struct_mode != .None
+
+		table_names, ok := list_tables_duckdb(db)
+		if !ok {return false}
+
+		for tname in table_names {
+			spec := Table_Spec {
+				name     = tname,
+				accessor = pascal_case(tname),
+			}
+			if schema.emit_structs {
+				spec.struct_name = struct_name_for(tname, spec.accessor)
+			}
+
+			rows, qerr := sql.query(
+				db,
+				"SELECT column_name, data_type, is_nullable " +
+				"FROM information_schema.columns " +
+				"WHERE table_schema = 'main' AND table_name = ? " +
+				"ORDER BY ordinal_position",
+				tname,
+			)
+			if qerr != nil {
+				fmt.eprintfln("schemagen: columns for %q: %v", tname, qerr)
+				return false
+			}
+
+			for sql.next(&rows) {
+				cname, dtype, is_nullable: string
+				for ci in 0 ..< rows.col_count {
+					switch sql.row_col_name(&rows, ci) {
+					case "column_name":
+						if s, sok := sql.row_value(&rows, ci).(string); sok {cname = s}
+					case "data_type":
+						if s, sok := sql.row_value(&rows, ci).(string); sok {dtype = s}
+					case "is_nullable":
+						if s, sok := sql.row_value(&rows, ci).(string); sok {is_nullable = s}
+					}
+				}
+				odin_type, supported := duckdb_type_to_odin(dtype)
+				if !supported {
+					fmt.eprintfln(
+						"schemagen: %s.%s: skipping composite column of type %q (no scalar mapping)",
+						tname,
+						cname,
+						dtype,
+					)
+					continue
+				}
+				if odin_type == "time.Time" {schema.uses_time = true}
+				append(
+					&spec.columns,
+					Column_Spec {
+						name = strings.clone(cname),
+						odin_type = odin_type,
+						nullable = is_nullable == "YES",
+					},
+				)
+			}
+			if rerr := sql.rows_err(&rows); rerr != nil {
+				fmt.eprintfln("schemagen: columns for %q: %v", tname, rerr)
+				sql.rows_close(&rows)
+				return false
+			}
+			sql.rows_close(&rows)
+
+			append(&schema.tables, spec)
+		}
+
+		return true
+	}
+}
+
 // --- Emit ---
 
 @(private = "file")
@@ -679,10 +849,10 @@ detect_pkg :: proc(dir: string) -> string {
 Options :: struct {
 	dir:    
 	string `args:"pos=0,required" usage:"package directory to write schema.gen.odin into"`,
-	db:     
-	string `args:"name=db"        usage:"introspect this database instead of structs (SQLite file path, or a DSN with -driver=postgres)"`,
-	driver: 
-	string `args:"name=driver"    usage:"DB driver for -db: sqlite (default) or postgres"`,
+	db:
+	string `args:"name=db"        usage:"introspect this database instead of structs (SQLite/DuckDB file path, or a DSN with -driver=postgres)"`,
+	driver:
+	string `args:"name=driver"    usage:"DB driver for -db: sqlite (default), postgres, or duckdb (build with -define:SCHEMAGEN_DUCKDB=true)"`,
 	pkg:    
 	string `args:"name=package"   usage:"override the generated package name"`,
 	structs:
@@ -705,8 +875,13 @@ run :: proc(prog: string, args: []string) -> int {
 		driver_kind = .Sqlite
 	case "postgres", "pg":
 		driver_kind = .Postgres
+	case "duckdb", "duck":
+		driver_kind = .Duckdb
 	case:
-		fmt.eprintfln("schemagen: -driver must be 'sqlite' or 'postgres', got %q", opt.driver)
+		fmt.eprintfln(
+			"schemagen: -driver must be 'sqlite', 'postgres', or 'duckdb', got %q",
+			opt.driver,
+		)
 		return 2
 	}
 
@@ -721,9 +896,10 @@ run :: proc(prog: string, args: []string) -> int {
 		return 2
 	}
 
-	if driver_kind == .Postgres && opt.db == "" {
-		fmt.eprintln(
-			"schemagen: -driver=postgres requires -db=<dsn> (the struct front-end is driver-agnostic)",
+	if (driver_kind == .Postgres || driver_kind == .Duckdb) && opt.db == "" {
+		fmt.eprintfln(
+			"schemagen: -driver=%s requires -db (the struct front-end is driver-agnostic)",
+			opt.driver,
 		)
 		return 2
 	}
@@ -741,6 +917,16 @@ run :: proc(prog: string, args: []string) -> int {
 			ok = front_end_db(&schema, opt.db)
 		case .Postgres:
 			ok = front_end_db_postgres(&schema, opt.db)
+		case .Duckdb:
+			when DUCKDB_INTROSPECT {
+				ok = front_end_db_duckdb(&schema, opt.db)
+			} else {
+				fmt.eprintln(
+					"schemagen: DuckDB introspection isn't compiled in. " +
+					"Rebuild with -define:SCHEMAGEN_DUCKDB=true and set the libduckdb loader path.",
+				)
+				return 2
+			}
 		}
 		if !ok {return 1}
 	} else {

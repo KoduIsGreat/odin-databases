@@ -184,6 +184,17 @@ just gen          # scangen + schemagen on the repo root (or `just gen <dir>`)
   just schema-db-postgres 'postgres://user:pass@localhost:5432/mydb?sslmode=disable' ./myapp
   ```
 
+  A DuckDB database can be introspected with `-driver=duckdb`. It links
+  `libduckdb`, so it's opt-in at build time (`-define:SCHEMAGEN_DUCKDB=true`) to
+  keep the default `schemagen`/`odb` free of that dependency — the `just` recipe
+  sets the flag and loader path for you. Composite columns (LIST/STRUCT/MAP/…)
+  have no single-field mapping and are skipped with a warning:
+
+  ```sh
+  just duckdb-lib                          # once, to fetch libduckdb
+  just schema-db-duckdb app.duckdb ./myapp
+  ```
+
 See [`introspection`](examples/introspection) for the DB-mode workflow.
 
 The `*.gen.odin` files are committed so the demo and examples build on a fresh

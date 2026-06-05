@@ -73,6 +73,7 @@ check-all:
     odin check drivers/mock -no-entry-point {{coll}}
     odin check tools/scangen {{coll}}
     odin check tools/schemagen {{coll}}
+    odin check tools/schemagen {{coll}} -define:SCHEMAGEN_DUCKDB=true
     odin check tools/migragen {{coll}}
     odin check tools/migranew {{coll}}
     odin check tools/odb {{coll}}
@@ -207,6 +208,16 @@ schema-db-postgres dsn dir:
 # with OpenSSL. Use when your server only accepts encrypted connections.
 schema-db-postgres-tls dsn dir:
     odin run tools/schemagen {{coll}} {{pg_tls_flags}} -- -driver=postgres -db={{dsn}} {{dir}}
+
+# Run schemagen's DuckDB DB front-end: introspect <db> (a DuckDB file, via
+# information_schema) and write row structs + typed descriptors. DuckDB
+# introspection is opt-in (links libduckdb), so this builds with
+# -define:SCHEMAGEN_DUCKDB=true and sets the loader path. Run `just duckdb-lib`
+# first if the library isn't present. Composite columns (LIST/STRUCT/...) are
+# skipped with a warning.
+#   just schema-db-duckdb app.duckdb ./myapp
+schema-db-duckdb db dir:
+    {{duck_ld}} odin run tools/schemagen {{coll}} -define:SCHEMAGEN_DUCKDB=true -- -driver=duckdb -db={{db}} {{dir}}
 
 # Scaffold a new, empty migration pair (<version>_<name>.up.sql / .down.sql)
 # into <dir>, using a fresh YYYYMMDDHHMMSS timestamp.
