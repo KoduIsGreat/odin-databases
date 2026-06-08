@@ -1,5 +1,6 @@
 package driver
 
+import "core:fmt"
 import "core:mem"
 import "core:time"
 
@@ -57,7 +58,12 @@ Value :: union {
 // INTERVAL) leave both nil — copying the struct copies them.
 Custom_Value :: struct {
 	storage: [2]i128,
-	convert: proc(payload: rawptr, dest_type: typeid, dest: rawptr, allocator: mem.Allocator) -> bool,
+	convert: proc(
+		payload: rawptr,
+		dest_type: typeid,
+		dest: rawptr,
+		allocator: mem.Allocator,
+	) -> bool,
 	clone:   proc(storage: ^[2]i128, allocator: mem.Allocator),
 	free:    proc(storage: ^[2]i128, allocator: mem.Allocator),
 }
@@ -99,9 +105,11 @@ Isolation_Level :: enum {
 //
 // All variants live here (in the driver contract package) because Odin
 // unions are closed — every variant must be declared at the union's
-// definition site. Drivers only ever produce Driver_Error values; the
-// other variants are produced by the user-facing sql package, but they
-// must be visible at the contract layer so the union type matches.
+// definition site. Drivers produce Driver_Error for backend failures and
+// Arg_Error when the caller's arguments don't match the query (only the driver
+// knows a prepared statement's parameter count). Pool_Error and Scan_Error are
+// produced by the user-facing sql package; all variants must be visible at the
+// contract layer so the union type matches.
 Error :: union {
 	Driver_Error,
 	Pool_Error,
@@ -120,9 +128,21 @@ Pool_Error :: enum {
 	Timeout,
 }
 
-Arg_Error :: enum {
-	Invalid_Type,
-	Wrong_Count,
+Arg_Error_Kind :: enum {
+	Wrong_Count, // number of args supplied != number of query placeholders
+	Invalid_Type, // an argument's type can't be bound as a query parameter
+}
+
+// Arg_Error reports a problem with the arguments passed to exec/query: either a
+// count mismatch against the query's placeholders (Wrong_Count) or a value that
+// can't be bound as a parameter (Invalid_Type). Drivers raise it after preparing
+// the statement, since the placeholder count is only known then.
+Arg_Error :: struct {
+	kind:          Arg_Error_Kind,
+	args_got:      int, // arguments supplied by the caller (Wrong_Count)
+	args_expected: int, // placeholders the query declares (Wrong_Count)
+	arg_idx:       int, // 0-based index of the offending argument (Invalid_Type)
+	value_type:    typeid, // type of the offending argument (Invalid_Type)
 }
 
 Scan_Error_Kind :: enum {
@@ -133,9 +153,67 @@ Scan_Error_Kind :: enum {
 }
 
 Scan_Error :: struct {
-	kind:       Scan_Error_Kind,
-	col_idx:    int,
-	col_name:   string,
-	dest_type:  typeid,
-	value_type: typeid,
+	kind:          Scan_Error_Kind,
+	col_idx:       int,
+	col_name:      string,
+	dest_type:     typeid,
+	value_type:    typeid,
+	cols_got:      int,
+	cols_expected: int,
+}
+
+
+err_to_string :: proc(u: Error) -> string {
+	switch err in u {
+	case Driver_Error:
+		return fmt.aprintf("sql driver error code %v: %v", err.code, err.message)
+	case Pool_Error:
+		switch err {
+		case .Exhausted:
+			return "sql pool exhausted"
+		case .Closed:
+			return "sql pool closed"
+		case .Timeout:
+			return "sql pool timeout"
+		}
+	case Scan_Error:
+		switch err.kind {
+		case .No_Row:
+			return "returned no rows"
+		case .Column_Count_Mismatch:
+			return fmt.aprintf(
+				"column count mismatch for column %v (idx %v), got %v, expected %v",
+				err.col_name,
+				err.col_idx,
+				err.cols_got,
+				err.cols_expected,
+			)
+		case .Dest_Not_Pointer:
+			return "sql dest not pointer"
+		case .Column_Type_Mismatch:
+			return fmt.aprintf(
+				"column type mismatch for column %v (idx %v), got %v, expected %v",
+				err.col_name,
+				err.col_idx,
+				err.value_type,
+				err.dest_type,
+			)
+		}
+	case Arg_Error:
+		switch err.kind {
+		case .Wrong_Count:
+			return fmt.aprintf(
+				"argument count mismatch: query has %v placeholder(s) but %v argument(s) were supplied",
+				err.args_expected,
+				err.args_got,
+			)
+		case .Invalid_Type:
+			return fmt.aprintf(
+				"unsupported argument type %v at index %v (cannot be bound as a query parameter)",
+				err.value_type,
+				err.arg_idx,
+			)
+		}
+	}
+	return "sql: unknown error"
 }

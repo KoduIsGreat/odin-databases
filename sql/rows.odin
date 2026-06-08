@@ -72,9 +72,12 @@ row_detached :: #force_inline proc(rows: ^Rows) -> bool {
 	return rows._detached
 }
 
-// columns returns column metadata for the result set.
+// columns returns column metadata for the result set. Returns nil for a zero /
+// errored Rows (driver unset) — e.g. the value query() hands back alongside an
+// error — so a caller that forgets to check that error and iterates anyway gets
+// an empty result instead of a nil-driver crash.
 columns :: proc(rows: ^Rows) -> []Column {
-	if rows.closed {return nil}
+	if rows.closed || rows.driver == nil {return nil}
 	return rows.driver.rows_columns(rows.handle)
 }
 

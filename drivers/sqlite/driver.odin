@@ -71,8 +71,16 @@ as_cstring :: #force_inline proc "contextless" (s: string) -> cstring {
 	return transmute(cstring)raw_data(s)
 }
 
+// bind_args validates the argument count against the statement's placeholders,
+// then binds positionally (1-based). Returns an Arg_Error on a count mismatch
+// (SQLite would otherwise raise a cryptic range error when over-supplied, or —
+// worse — silently bind NULL for missing args when under-supplied), a
+// Driver_Error on a failing bind, or nil on success.
 @(private)
-bind_args :: proc(stmt: ^sql3.stmt, args: []drv.Value) -> i32 {
+bind_args :: proc(conn: ^Sqlite_Conn, stmt: ^sql3.stmt, args: []drv.Value) -> drv.Error {
+	if expected := int(sql3.bind_parameter_count(stmt)); expected != len(args) {
+		return drv.Arg_Error{kind = .Wrong_Count, args_expected = expected, args_got = len(args)}
+	}
 	for val, i in args {
 		idx := i32(i + 1) // SQLite bind is 1-indexed
 		rc: i32
@@ -107,9 +115,9 @@ bind_args :: proc(stmt: ^sql3.stmt, args: []drv.Value) -> i32 {
 		case:
 			rc = sql3.bind_null(stmt, idx)
 		}
-		if rc != sql3.OK {return rc}
+		if rc != sql3.OK {return make_error(conn.db)}
 	}
-	return sql3.OK
+	return nil
 }
 
 @(private)
@@ -337,6 +345,12 @@ sqlite_exec :: proc(
 			if stmt == nil {
 				continue // trailing whitespace / comment-only chunk
 			}
+			// No args were supplied, so a statement with placeholders is a caller
+			// mistake — SQLite would otherwise step it with every parameter NULL.
+			if expected := int(sql3.bind_parameter_count(stmt)); expected != 0 {
+				sql3.finalize(stmt)
+				return {}, drv.Arg_Error{kind = .Wrong_Count, args_expected = expected, args_got = 0}
+			}
 			rc = sql3.step(stmt)
 			sql3.finalize(stmt)
 			if rc != sql3.DONE && rc != sql3.ROW {
@@ -357,8 +371,8 @@ sqlite_exec :: proc(
 	}
 	defer sql3.finalize(stmt)
 
-	if bind_args(stmt, args) != sql3.OK {
-		return {}, make_error(conn.db)
+	if berr := bind_args(conn, stmt, args); berr != nil {
+		return {}, berr
 	}
 
 	rc = sql3.step(stmt)
@@ -390,9 +404,9 @@ sqlite_query :: proc(
 		return nil, make_error(conn.db)
 	}
 
-	if bind_args(stmt, args) != sql3.OK {
+	if berr := bind_args(conn, stmt, args); berr != nil {
 		sql3.finalize(stmt)
-		return nil, make_error(conn.db)
+		return nil, berr
 	}
 
 	ncols := int(sql3.column_count(stmt))
@@ -433,8 +447,8 @@ sqlite_prepare :: proc(
 sqlite_stmt_exec :: proc(handle: drv.Stmt_Handle, args: []drv.Value) -> (drv.Result, drv.Error) {
 	wrapper := cast(^Sqlite_Stmt)handle
 
-	if bind_args(wrapper.stmt, args) != sql3.OK {
-		return {}, make_error(wrapper.conn.db)
+	if berr := bind_args(wrapper.conn, wrapper.stmt, args); berr != nil {
+		return {}, berr
 	}
 
 	rc := sql3.step(wrapper.stmt)
@@ -459,8 +473,8 @@ sqlite_stmt_query :: proc(
 ) {
 	wrapper := cast(^Sqlite_Stmt)handle
 
-	if bind_args(wrapper.stmt, args) != sql3.OK {
-		return nil, make_error(wrapper.conn.db)
+	if berr := bind_args(wrapper.conn, wrapper.stmt, args); berr != nil {
+		return nil, berr
 	}
 
 	ncols := int(sql3.column_count(wrapper.stmt))

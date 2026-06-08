@@ -252,6 +252,13 @@ send_simple :: proc(conn: ^Pg_Conn, sql: string) -> drv.Error {
 
 // send_extended issues Parse+Bind(+Describe)+Execute+Sync on the unnamed
 // statement/portal for a parameterized query.
+//
+// Argument-count mismatches aren't pre-checked here (unlike the SQLite/DuckDB
+// drivers, which know the count after preparing): the server validates the Bind
+// against the parsed statement and returns a clear ErrorResponse — e.g. "bind
+// message supplies 1 parameters, but prepared statement requires 0" — which
+// surfaces as a Driver_Error. Counting placeholders client-side would mean
+// parsing SQL or an extra Describe round-trip, neither worth it.
 @(private)
 send_extended :: proc(conn: ^Pg_Conn, sql: string, args: []drv.Value, describe: bool) -> drv.Error {
 	clear(&conn.wbuf)
