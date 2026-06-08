@@ -127,13 +127,16 @@ postgres-docker-stop:
 
 # --- Examples -----------------------------------------------------------------
 
-# Run an example by name, e.g. `just run-example quickstart`.
+# Run an example by name, e.g. `just run-example quickstart`. Sets the DuckDB
+# loader path so DuckDB-linked examples (e.g. duckdb, err_handling) find
+# libduckdb at run time; harmless for examples that don't link it.
 run-example name:
-    odin run examples/{{name}} {{coll}}
+    {{duck_ld}} odin run examples/{{name}} {{coll}}
 
-# Run an example's tests by name, e.g. `just test-example testing`.
+# Run an example's tests by name, e.g. `just test-example testing`. Sets the
+# DuckDB loader path for the same reason as run-example.
 test-example name:
-    odin test examples/{{name}} {{coll}}
+    {{duck_ld}} odin test examples/{{name}} {{coll}}
 
 # Smoke-test the generated `ss` postgres schema with a typed query-builder
 # SELECT. Reads connection settings from examples/ss/.env (copy the .env.example
