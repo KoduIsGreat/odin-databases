@@ -24,16 +24,29 @@
 //   - last_insert_id is always 0 (DuckDB has no rowid/last-insert concept).
 //   - Isolation levels are ignored: BEGIN starts DuckDB's snapshot-isolated tx.
 //
-// Connection model: each pooled connection opens its own DuckDB Database +
-// Connection. As with the SQLite driver, that means a `:memory:` DSN gives each
-// pooled connection an *isolated* in-memory database. For shared in-memory
-// state across a pool, call `sql.set_max_open_conns(db, 1)` or use a file DSN.
+// Connection model: DuckDB separates the *database* (an engine instance bound
+// to a path) from a *connection* (a session on it), and one database can back
+// many connections — it handles inter-connection concurrency itself.
+//
+// A file database may only be opened once per process (a second instance
+// collides on DuckDB's file lock), so connections to a file DSN share a single
+// reference-counted DuckDB Database, keyed by DSN in a process-global cache and
+// closed once its last connection is released. Each pooled connection is its
+// own DuckDB Connection on that shared instance, so a file-backed pool runs
+// multiple connections concurrently.
+//
+// In-memory DSNs ("" / ":memory:" / ":memory:<name>") are NOT shared: DuckDB
+// makes every in-memory open an independent, isolated database, and the driver
+// keeps that semantics so two unrelated `sql.open(":memory:")` calls don't
+// collide. The cost is that a `:memory:` pool can't share state across multiple
+// connections — pin it with `sql.set_max_open_conns(db, 1)`, or use a file DSN.
 package duckdb
 
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 import drv "database:sql/driver"
@@ -42,7 +55,7 @@ import ddb "database:bindings/duckdb/duckdb"
 // --- Driver vtable (public) ---
 
 driver := drv.Driver {
-	data         = nil,
+	data         = &_cache,
 	open         = duckdb_open,
 	close_conn   = duckdb_close_conn,
 	ping         = duckdb_ping,
@@ -66,15 +79,142 @@ driver := drv.Driver {
 // --- Internal wrapper types ---
 
 Duck_Conn :: struct {
-	db:        ddb.Database,
-	con:       ddb.Connection,
+	db:        ddb.Database, // file DSN: cache-owned (shared). in-memory: conn-owned.
+	con:       ddb.Connection, // owned by this conn
 	allocator: mem.Allocator,
+	cache:     ^Duck_Cache, // non-nil only for shared (file) DSNs; nil = conn owns db
+	dsn:       string, // owned cache key used to release `db`; set only when cache != nil
 	// Holds the most recent error message. DuckDB's error strings live inside
 	// the result / prepared statement we destroy right away, so make_error
 	// clones the message here (freeing the previous one). Like SQLite's errmsg,
 	// a returned Driver_Error.message is borrowed and valid only until the next
 	// failing call on this connection (or until the connection is closed).
 	last_error: string,
+}
+
+// --- Shared-database cache ---
+//
+// DuckDB allows only one Database instance per file at a time but supports many
+// Connections on one Database. Opening a fresh Database per pooled connection
+// would self-collide on the file's instance lock, so the cache opens one
+// Database per file DSN and hands every connection on that DSN a session on the
+// shared instance, closing it when the last connection is released. In-memory
+// DSNs bypass the cache entirely (see _is_shared_dsn).
+
+// _is_shared_dsn reports whether a DSN names an on-disk database whose single
+// instance must be shared across connections. In-memory DSNs ("" / ":memory:" /
+// ":memory:<name>") return false: DuckDB makes each in-memory open an isolated
+// database, and the driver preserves that rather than forcing process-wide
+// sharing of all `:memory:` handles.
+@(private)
+_is_shared_dsn :: proc(dsn: string) -> bool {
+	return dsn != "" && !strings.has_prefix(dsn, ":memory:")
+}
+
+@(private)
+Duck_Cache :: struct {
+	mu:      sync.Mutex,
+	entries: map[string]Duck_Db_Entry, // keyed by DSN
+	ready:   bool,
+}
+
+// Cache internals (the map and its key strings) live for as long as the cache
+// holds entries, which is independent of any single connection's or DB's
+// lifetime — so they use the process-global heap allocator rather than a
+// caller-provided one, which could be a transient/arena allocator. The map is
+// freed once the pool fully drains (see _cache_release).
+@(private)
+_cache_allocator :: proc() -> mem.Allocator {return runtime.heap_allocator()}
+
+@(private)
+Duck_Db_Entry :: struct {
+	db:       ddb.Database,
+	refcount: int,
+	key:      string, // owned clone backing the map key; freed at refcount 0
+}
+
+// Process-global cache shared by every DB opened through this driver. Wired into
+// `driver.data` so `open` reaches it through the contract; `close_conn` reaches
+// it through `Duck_Conn.cache`.
+@(private)
+_cache: Duck_Cache
+
+// _cache_acquire returns the shared Database for `dsn`, opening it on first use
+// and bumping its reference count. The caller must pair every success with
+// `_cache_release`.
+@(private)
+_cache_acquire :: proc(
+	cache: ^Duck_Cache,
+	dsn: string,
+	allocator: mem.Allocator,
+) -> (
+	ddb.Database,
+	drv.Error,
+) {
+	sync.mutex_lock(&cache.mu)
+	defer sync.mutex_unlock(&cache.mu)
+
+	if !cache.ready {
+		cache.entries = make(map[string]Duck_Db_Entry, _cache_allocator())
+		cache.ready = true
+	}
+
+	if entry, found := cache.entries[dsn]; found {
+		entry.refcount += 1
+		cache.entries[dsn] = entry
+		return entry.db, nil
+	}
+
+	// Open the Database while holding the lock so two threads can't race to
+	// create competing instances of the same DSN.
+	cdsn := strings.clone_to_cstring(dsn, allocator)
+	defer mem.free(rawptr(cdsn), allocator)
+
+	db: ddb.Database
+	if ddb.open(cdsn, &db) != .Success {
+		return nil, drv.Driver_Error{code = 1, message = "duckdb: failed to open database"}
+	}
+
+	key := strings.clone(dsn, _cache_allocator())
+	cache.entries[key] = Duck_Db_Entry{db = db, refcount = 1, key = key}
+	return db, nil
+}
+
+// _cache_release drops one reference to the Database for `dsn`, closing it and
+// dropping the cache entry once the count reaches zero.
+@(private)
+_cache_release :: proc(cache: ^Duck_Cache, dsn: string) {
+	sync.mutex_lock(&cache.mu)
+
+	entry, found := cache.entries[dsn]
+	if !found {
+		sync.mutex_unlock(&cache.mu)
+		return
+	}
+
+	entry.refcount -= 1
+	if entry.refcount > 0 {
+		cache.entries[dsn] = entry
+		sync.mutex_unlock(&cache.mu)
+		return
+	}
+
+	// Last reference — remove the entry, then close the Database and free the
+	// key outside the lock.
+	delete_key(&cache.entries, dsn)
+	db := entry.db
+	key := entry.key
+	// Once the pool fully drains, drop the map too so the cache leaves nothing
+	// allocated; the next acquire re-inits it.
+	if len(cache.entries) == 0 {
+		delete(cache.entries)
+		cache.entries = {}
+		cache.ready = false
+	}
+	sync.mutex_unlock(&cache.mu)
+
+	ddb.close(&db)
+	delete(key, _cache_allocator())
 }
 
 Duck_Stmt :: struct {
@@ -140,10 +280,15 @@ as_cstring :: #force_inline proc "contextless" (s: string) -> cstring {
 	return transmute(cstring)raw_data(s)
 }
 
-// Bind positional args onto a prepared statement (1-based). Returns a
-// Driver_Error for the first failing bind, or nil on success.
+// Bind positional args onto a prepared statement (1-based). Validates the
+// argument count against the statement's declared parameters first, then binds.
+// Returns an Arg_Error for a count/type mismatch, a Driver_Error for a failing
+// bind, or nil on success.
 @(private)
 bind_args :: proc(conn: ^Duck_Conn, stmt: ddb.Prepared_Statement, args: []drv.Value) -> drv.Error {
+	if expected := int(ddb.nparams(stmt)); expected != len(args) {
+		return drv.Arg_Error{kind = .Wrong_Count, args_expected = expected, args_got = len(args)}
+	}
 	for val, i in args {
 		idx := ddb.Idx_T(i + 1)
 		st: ddb.State
@@ -169,8 +314,9 @@ bind_args :: proc(conn: ^Duck_Conn, stmt: ddb.Prepared_Statement, args: []drv.Va
 			st = ddb.bind_timestamp(stmt, idx, ddb.Timestamp{micros = micros})
 		case drv.Custom_Value:
 			// Custom_Value is a read-side carrier (e.g. DECIMAL cells); it isn't a
-			// meaningful query parameter. Bind a DECIMAL via a string + CAST.
-			st = ddb.bind_null(stmt, idx)
+			// meaningful query parameter. Surface that rather than silently binding
+			// NULL — bind a DECIMAL via a string + CAST instead.
+			return drv.Arg_Error{kind = .Invalid_Type, arg_idx = i, value_type = typeid_of(drv.Custom_Value)}
 		case drv.Null:
 			st = ddb.bind_null(stmt, idx)
 		case:
@@ -1146,17 +1292,33 @@ duckdb_open :: proc(
 	drv.Conn_Handle,
 	drv.Error,
 ) {
-	cdsn := strings.clone_to_cstring(dsn, allocator)
-	defer mem.free(rawptr(cdsn), allocator)
-
 	db: ddb.Database
-	if ddb.open(cdsn, &db) != .Success {
-		return nil, drv.Driver_Error{code = 1, message = "duckdb: failed to open database"}
+	cache: ^Duck_Cache // non-nil iff this DSN's Database is cache-owned
+
+	if _is_shared_dsn(dsn) {
+		cache = cast(^Duck_Cache)driver_data
+		if cache == nil {cache = &_cache}
+		derr: drv.Error
+		db, derr = _cache_acquire(cache, dsn, allocator)
+		if derr != nil {
+			return nil, derr
+		}
+	} else {
+		// In-memory: each connection owns its own isolated DuckDB database.
+		cdsn := strings.clone_to_cstring(dsn, allocator)
+		defer mem.free(rawptr(cdsn), allocator)
+		if ddb.open(cdsn, &db) != .Success {
+			return nil, drv.Driver_Error{code = 1, message = "duckdb: failed to open database"}
+		}
 	}
 
 	con: ddb.Connection
 	if ddb.connect(db, &con) != .Success {
-		ddb.close(&db)
+		if cache != nil {
+			_cache_release(cache, dsn) // drop the ref we just took
+		} else {
+			ddb.close(&db)
+		}
 		return nil, drv.Driver_Error{code = 1, message = "duckdb: failed to connect"}
 	}
 
@@ -1164,14 +1326,24 @@ duckdb_open :: proc(
 	conn.db = db
 	conn.con = con
 	conn.allocator = allocator
+	conn.cache = cache
+	if cache != nil {conn.dsn = strings.clone(dsn, allocator)}
 	return drv.Conn_Handle(conn), nil
 }
 
 @(private)
 duckdb_close_conn :: proc(handle: drv.Conn_Handle) -> drv.Error {
 	conn := cast(^Duck_Conn)handle
+	// Disconnect this session first, then release the Database. For a shared
+	// (file) DSN that drops our cache reference (closing it iff we were the last
+	// connection); for an in-memory DSN this connection owns the Database.
 	ddb.disconnect(&conn.con)
-	ddb.close(&conn.db)
+	if conn.cache != nil {
+		_cache_release(conn.cache, conn.dsn)
+		delete(conn.dsn, conn.allocator)
+	} else {
+		ddb.close(&conn.db)
+	}
 	if conn.last_error != "" {delete(conn.last_error, conn.allocator)}
 	mem.free(conn, conn.allocator)
 	return nil

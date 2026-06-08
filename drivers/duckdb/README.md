@@ -123,10 +123,17 @@ This is an early driver; the rough edges are deliberate, not hidden:
   transaction regardless of the requested `Isolation_Level` / `read_only`.
 - **No advisory locking** (the optional `lock` / `unlock` contract is left nil),
   so the `migrate` runner proceeds without cross-process locking.
-- **In-memory pooling.** Each pooled connection opens its own DuckDB database, so
-  a `:memory:` DSN gives each connection an *isolated* in-memory database (same
-  caveat as the SQLite driver). For shared in-memory state across a pool, call
-  `sql.set_max_open_conns(db, 1)` or use a file DSN.
+- **Connection model.** A **file** DSN opens a single DuckDB *database* shared by
+  every pooled connection (each connection is its own DuckDB *session*), so a
+  file-backed pool runs multiple connections concurrently. The shared instance is
+  reference-counted in a process-global cache, keyed by DSN, and closed when its
+  last connection is released — this is also what avoids DuckDB's single-instance
+  file-lock collision when the pool opens a second connection.
+- **In-memory pooling.** A `:memory:` DSN is **not** shared: DuckDB makes every
+  in-memory open an isolated database, and the driver keeps that (so two unrelated
+  `sql.open(":memory:")` calls don't collide). The cost is that a `:memory:` pool
+  can't share state across connections — call `sql.set_max_open_conns(db, 1)`, or
+  use a file DSN.
 
 Contributions that add streaming, fill in the composite/exotic types (via
 `Custom_Value`), or implement advisory locking are welcome.

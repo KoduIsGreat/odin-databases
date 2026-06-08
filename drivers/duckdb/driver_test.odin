@@ -1,6 +1,7 @@
 package duckdb
 
 import "core:fmt"
+import "core:os"
 import "core:testing"
 import "core:time"
 
@@ -776,4 +777,78 @@ test_query_error :: proc(t: ^testing.T) {
 	de, ok := e.(sql.Driver_Error)
 	testing.expect(t, ok, "expected a Driver_Error")
 	testing.expect(t, len(de.message) > 0, "error message should be populated")
+}
+
+// A file DSN must open exactly one DuckDB Database instance shared by every
+// pooled connection: data written on one connection is visible on another, and
+// a second connection does not collide on DuckDB's single-instance file lock.
+// Pre-cache, each pooled connection opened its own Database, so the second
+// open would fail on the lock (and a `:memory:` pool would see isolated data).
+@(test)
+test_file_dsn_shared_across_connections :: proc(t: ^testing.T) {
+	path := "duckdb_cache_test.duckdb"
+	os.remove(path) // start clean (ignore "not found")
+	defer {
+		os.remove(path)
+		os.remove(fmt.tprintf("%s.wal", path))
+	}
+
+	db, err := sql.open(&driver, path)
+	testing.expect_value(t, err, nil)
+	defer sql.close(db)
+
+	// Hold two connections at once so the pool must hand out two distinct
+	// physical connections — both are sessions on the one shared Database.
+	c1, e1 := sql.checkout(db)
+	testing.expect_value(t, e1, nil)
+	defer sql.checkin(&c1)
+	c2, e2 := sql.checkout(db)
+	testing.expect_value(t, e2, nil) // pre-cache this collided on the file lock
+	defer sql.checkin(&c2)
+
+	_, ce := sql.exec(&c1, "CREATE TABLE t (id INTEGER)")
+	testing.expect_value(t, ce, nil)
+	_, ie := sql.exec(&c1, "INSERT INTO t VALUES (42)")
+	testing.expect_value(t, ie, nil)
+
+	// Read it back on the other connection — visible only if they share an instance.
+	rows, qe := sql.query(&c2, "SELECT id FROM t")
+	testing.expect_value(t, qe, nil)
+	defer sql.rows_close(&rows)
+
+	testing.expect(t, sql.next(&rows), "row written on c1 should be visible on c2")
+	got: i64
+	testing.expect_value(t, sql.scan(&rows, &got), nil)
+	testing.expect_value(t, got, 42)
+}
+
+// Argument count must be validated against the prepared statement's parameters
+// so a caller mistake surfaces as a clear Arg_Error, not DuckDB's generic bind
+// failure. (The err_handling example passed an arg to a placeholder-free query.)
+@(test)
+test_arg_count_mismatch :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	sql.exec(db, "CREATE TABLE t (id INTEGER, name VARCHAR)")
+
+	// Arg supplied to a query with no placeholders.
+	_, e1 := sql.query(db, "SELECT id FROM t WHERE id > 0", i64(18))
+	ae1, ok1 := e1.(sql.Arg_Error)
+	testing.expect(t, ok1, "expected an Arg_Error")
+	testing.expect_value(t, ae1.kind, sql.Arg_Error_Kind.Wrong_Count)
+	testing.expect_value(t, ae1.args_expected, 0)
+	testing.expect_value(t, ae1.args_got, 1)
+
+	// Too many args on exec.
+	_, e2 := sql.exec(db, "INSERT INTO t (id) VALUES (?)", i64(1), i64(2))
+	ae2, ok2 := e2.(sql.Arg_Error)
+	testing.expect(t, ok2, "expected an Arg_Error")
+	testing.expect_value(t, ae2.kind, sql.Arg_Error_Kind.Wrong_Count)
+	testing.expect_value(t, ae2.args_expected, 1)
+	testing.expect_value(t, ae2.args_got, 2)
+
+	// Correct count still works.
+	_, e3 := sql.exec(db, "INSERT INTO t (id, name) VALUES (?, ?)", i64(1), "ok")
+	testing.expect_value(t, e3, nil)
 }
