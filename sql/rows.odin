@@ -1,5 +1,6 @@
 package sql
 
+import "base:runtime"
 import "core:mem"
 import "core:strings"
 import "core:time"
@@ -34,6 +35,13 @@ Rows :: struct {
 	allocator:  mem.Allocator, // for _values / _cols
 	closed:     bool,
 	err:        Error, // set when next() stops; nil = clean EOF
+
+	// Diagnostic context for errors raised after creation (mid-stream
+	// failures, scan errors): the originating SQL text (borrowed from the
+	// query/stmt caller — keep it alive for the Rows' lifetime) and the
+	// call site that issued the query.
+	query:      string,
+	loc:        runtime.Source_Code_Location,
 
 	// Current row state — filled by next()
 	col_count:  int,
@@ -102,7 +110,9 @@ next :: proc(rows: ^Rows) -> bool {
 	}
 	rows.has_row = rows.driver.rows_next(rows.handle, rows._values)
 	if !rows.has_row && rows.driver.rows_err != nil {
-		rows.err = rows.driver.rows_err(rows.handle)
+		if iter_err := rows.driver.rows_err(rows.handle); iter_err != nil {
+			rows.err = with_query(iter_err, rows.query, rows.loc)
+		}
 	}
 	return rows.has_row
 }
@@ -128,7 +138,9 @@ rows_close :: proc(rows: ^Rows) -> Error {
 
 	err: Error
 	if rows.driver != nil && rows.handle != nil {
-		err = rows.driver.rows_close(rows.handle)
+		if cerr := rows.driver.rows_close(rows.handle); cerr != nil {
+			err = with_query(cerr, rows.query, rows.loc)
+		}
 	}
 	// A detached Row owns its cloned column-name strings (see detach_rows). For
 	// a live Rows the names are borrowed from the driver, which frees them in

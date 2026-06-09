@@ -1,7 +1,9 @@
 package driver
 
+import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:strings"
 import "core:time"
 
 // Value is the set of types that can be passed as query arguments
@@ -117,9 +119,29 @@ Error :: union {
 	Scan_Error,
 }
 
+// Error_Ctx is the diagnostic context the user-facing sql package attaches to
+// an error on its way back to the caller: the SQL text that was being executed
+// and the application call site that issued it (captured via #caller_location).
+// It is embedded (`using`) in every struct variant of Error. Drivers never set
+// it — annotation is the sql layer's job — so a zero ctx ("" / {}) simply means
+// "not attached".
+//
+// `query` is BORROWED from the string the caller passed to exec/query/prepare;
+// it is not cloned. It is valid as long as that string lives — always the case
+// for the immediate error return, and for string literals (the common case)
+// forever. Handles that outlive the call (Stmt, Rows) keep the same borrowed
+// reference, so a caller that builds queries dynamically must keep the string
+// alive for the handle's lifetime (already required today, since drivers may
+// also reference it).
+Error_Ctx :: struct {
+	query: string,
+	loc:   runtime.Source_Code_Location,
+}
+
 Driver_Error :: struct {
-	code:    int,
-	message: string,
+	using ctx: Error_Ctx,
+	code:      int,
+	message:   string,
 }
 
 Pool_Error :: enum {
@@ -138,6 +160,7 @@ Arg_Error_Kind :: enum {
 // can't be bound as a parameter (Invalid_Type). Drivers raise it after preparing
 // the statement, since the placeholder count is only known then.
 Arg_Error :: struct {
+	using ctx:     Error_Ctx,
 	kind:          Arg_Error_Kind,
 	args_got:      int, // arguments supplied by the caller (Wrong_Count)
 	args_expected: int, // placeholders the query declares (Wrong_Count)
@@ -153,6 +176,7 @@ Scan_Error_Kind :: enum {
 }
 
 Scan_Error :: struct {
+	using ctx:     Error_Ctx,
 	kind:          Scan_Error_Kind,
 	col_idx:       int,
 	col_name:      string,
@@ -162,26 +186,52 @@ Scan_Error :: struct {
 	cols_expected: int,
 }
 
+// error_ctx returns the diagnostic context (query text + call site) attached
+// to an error, or ok=false for variants that can't carry one (Pool_Error) or
+// a nil error. A returned ctx may still be zero if nothing was attached.
+error_ctx :: proc(u: Error) -> (ctx: Error_Ctx, ok: bool) {
+	#partial switch e in u {
+	case Driver_Error:
+		return e.ctx, true
+	case Arg_Error:
+		return e.ctx, true
+	case Scan_Error:
+		return e.ctx, true
+	}
+	return {}, false
+}
 
-err_to_string :: proc(u: Error) -> string {
+// error_query returns the SQL text attached to an error, or "" if none.
+error_query :: proc(u: Error) -> string {
+	ctx, _ := error_ctx(u)
+	return ctx.query
+}
+
+
+// err_to_string renders an error for display, including the originating query
+// and application call site when the sql layer attached them (see Error_Ctx).
+// The result is allocated from the given allocator; the caller owns it.
+err_to_string :: proc(u: Error, allocator := context.allocator) -> string {
+	b := strings.builder_make(allocator)
 	switch err in u {
 	case Driver_Error:
-		return fmt.aprintf("sql driver error code %v: %v", err.code, err.message)
+		fmt.sbprintf(&b, "sql driver error code %v: %v", err.code, err.message)
 	case Pool_Error:
 		switch err {
 		case .Exhausted:
-			return "sql pool exhausted"
+			strings.write_string(&b, "sql pool exhausted")
 		case .Closed:
-			return "sql pool closed"
+			strings.write_string(&b, "sql pool closed")
 		case .Timeout:
-			return "sql pool timeout"
+			strings.write_string(&b, "sql pool timeout")
 		}
 	case Scan_Error:
 		switch err.kind {
 		case .No_Row:
-			return "returned no rows"
+			strings.write_string(&b, "returned no rows")
 		case .Column_Count_Mismatch:
-			return fmt.aprintf(
+			fmt.sbprintf(
+				&b,
 				"column count mismatch for column %v (idx %v), got %v, expected %v",
 				err.col_name,
 				err.col_idx,
@@ -189,9 +239,10 @@ err_to_string :: proc(u: Error) -> string {
 				err.cols_expected,
 			)
 		case .Dest_Not_Pointer:
-			return "sql dest not pointer"
+			strings.write_string(&b, "sql dest not pointer")
 		case .Column_Type_Mismatch:
-			return fmt.aprintf(
+			fmt.sbprintf(
+				&b,
 				"column type mismatch for column %v (idx %v), got %v, expected %v",
 				err.col_name,
 				err.col_idx,
@@ -202,18 +253,38 @@ err_to_string :: proc(u: Error) -> string {
 	case Arg_Error:
 		switch err.kind {
 		case .Wrong_Count:
-			return fmt.aprintf(
+			fmt.sbprintf(
+				&b,
 				"argument count mismatch: query has %v placeholder(s) but %v argument(s) were supplied",
 				err.args_expected,
 				err.args_got,
 			)
 		case .Invalid_Type:
-			return fmt.aprintf(
+			fmt.sbprintf(
+				&b,
 				"unsupported argument type %v at index %v (cannot be bound as a query parameter)",
 				err.value_type,
 				err.arg_idx,
 			)
 		}
 	}
-	return "sql: unknown error"
+	if strings.builder_len(b) == 0 {
+		strings.write_string(&b, "sql: unknown error")
+	}
+	if ctx, has_ctx := error_ctx(u); has_ctx {
+		if ctx.query != "" {
+			fmt.sbprintf(&b, "\n  query: %s", ctx.query)
+		}
+		if ctx.loc.file_path != "" {
+			fmt.sbprintf(
+				&b,
+				"\n  at:    %s(%d:%d) in %s",
+				ctx.loc.file_path,
+				ctx.loc.line,
+				ctx.loc.column,
+				ctx.loc.procedure,
+			)
+		}
+	}
+	return strings.to_string(b)
 }

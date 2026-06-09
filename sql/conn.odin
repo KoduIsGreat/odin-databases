@@ -29,18 +29,43 @@ checkin :: proc(conn: ^Conn) -> Error {
 }
 
 @(private)
-conn_exec :: proc(conn: ^Conn, query_str: string, args: ..Value) -> (Result, Error) {
-	return conn.driver.exec(conn.handle, query_str, args)
+conn_exec :: proc(
+	conn: ^Conn,
+	query_str: string,
+	args: ..Value,
+	loc := #caller_location,
+) -> (
+	Result,
+	Error,
+) {
+	result, err := conn.driver.exec(conn.handle, query_str, args)
+	if err != nil {return {}, with_query(err, query_str, loc)}
+	return result, nil
 }
 
 @(private)
-conn_query :: proc(conn: ^Conn, query_str: string, args: ..Value) -> (Rows, Error) {
+conn_query :: proc(
+	conn: ^Conn,
+	query_str: string,
+	args: ..Value,
+	loc := #caller_location,
+) -> (
+	Rows,
+	Error,
+) {
 	handle, err := conn.driver.query(conn.handle, query_str, args)
-	if err != nil {return {}, err}
+	if err != nil {return {}, with_query(err, query_str, loc)}
 
 	// Rows from an explicit Conn do NOT release the connection.
 	// The caller manages the Conn lifecycle separately.
-	return Rows{db = nil, conn = conn.handle, handle = handle, driver = conn.driver}, nil
+	return Rows {
+			db = nil,
+			conn = conn.handle,
+			handle = handle,
+			driver = conn.driver,
+			query = query_str,
+			loc = loc,
+		}, nil
 }
 
 // --- Advisory locking ---

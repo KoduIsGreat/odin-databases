@@ -51,6 +51,70 @@ test_close_row_safe_on_driver_error :: proc(t: ^testing.T) {
 	testing.expect(t, ok, "expected Driver_Error on error Row")
 }
 
+// --- error context (query text + call site) ---------------------------------
+
+// Errors surfaced by the sql layer carry the originating query and the
+// application call site (Error_Ctx), so failures are traceable without
+// the caller threading that context manually.
+@(test)
+test_error_carries_query_and_call_site :: proc(t: ^testing.T) {
+	m, db := mock.open(t)
+	defer mock.close(m, db)
+
+	mock.returns_error(
+		mock.expect_exec(m, "UPDATE"),
+		drv.Driver_Error{code = 1, message = "boom"},
+	)
+
+	q := "UPDATE users SET name = ? WHERE id = ?"
+	_, err := sql.exec(db, q, "alice", i64(1))
+
+	de, ok := err.(sql.Driver_Error)
+	testing.expect(t, ok, "expected Driver_Error")
+	testing.expect_value(t, de.query, q)
+	testing.expect_value(t, de.message, "boom") // driver payload untouched
+	testing.expect(
+		t,
+		de.loc.procedure == "test_error_carries_query_and_call_site",
+		"loc should point at this test, the sql.exec call site",
+	)
+
+	ctx, has_ctx := sql.error_ctx(err)
+	testing.expect(t, has_ctx, "Driver_Error should expose an Error_Ctx")
+	testing.expect_value(t, ctx.query, q)
+	testing.expect_value(t, sql.error_query(err), q)
+}
+
+// A scan mismatch reports the query of the Rows being scanned and the scan
+// call site.
+@(test)
+test_scan_error_carries_query :: proc(t: ^testing.T) {
+	m, db := mock.open(t)
+	defer mock.close(m, db)
+
+	mock.returns_rows(mock.expect_query(m, "SELECT"), {"id"}, {{i64(1)}})
+
+	q := "SELECT id FROM users"
+	rows, qerr := sql.query(db, q)
+	testing.expect_value(t, qerr, nil)
+	defer sql.rows_close(&rows)
+
+	testing.expect(t, sql.next(&rows), "expected one row")
+
+	dest: string // i64 column can't scan into a string
+	err := sql.scan(&rows, &dest)
+
+	se, ok := err.(sql.Scan_Error)
+	testing.expect(t, ok, "expected Scan_Error")
+	testing.expect_value(t, se.kind, sql.Scan_Error_Kind.Column_Type_Mismatch)
+	testing.expect_value(t, se.query, q)
+	testing.expect(
+		t,
+		se.loc.procedure == "test_scan_error_carries_query",
+		"loc should point at the sql.scan call site",
+	)
+}
+
 // A successful query_row + scan + close_row must leave nothing allocated.
 // Regression test: detach_rows used to mark the Row closed, so close_row
 // no-op'd and leaked the cloned column buffers/names on every query_row call.

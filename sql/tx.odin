@@ -62,25 +62,58 @@ conn_begin :: proc(conn: ^Conn, opts := Tx_Options{}) -> (Tx, Error) {
 }
 
 @(private)
-tx_exec :: proc(tx: ^Tx, query_str: string, args: ..Value) -> (Result, Error) {
+tx_exec :: proc(
+	tx: ^Tx,
+	query_str: string,
+	args: ..Value,
+	loc := #caller_location,
+) -> (
+	Result,
+	Error,
+) {
 	if tx.done {
-		return {}, Driver_Error{code = 0, message = "sql: transaction already completed"}
+		return {}, with_query(
+			Driver_Error{code = 0, message = "sql: transaction already completed"},
+			query_str,
+			loc,
+		)
 	}
-	return tx.driver.exec(tx.conn_handle, query_str, args)
+	result, err := tx.driver.exec(tx.conn_handle, query_str, args)
+	if err != nil {return {}, with_query(err, query_str, loc)}
+	return result, nil
 }
 
 // Rows from a Tx do NOT own the connection — close them before
 // commit/rollback.
 @(private)
-tx_query :: proc(tx: ^Tx, query_str: string, args: ..Value) -> (Rows, Error) {
+tx_query :: proc(
+	tx: ^Tx,
+	query_str: string,
+	args: ..Value,
+	loc := #caller_location,
+) -> (
+	Rows,
+	Error,
+) {
 	if tx.done {
-		return {}, Driver_Error{code = 0, message = "sql: transaction already completed"}
+		return {}, with_query(
+			Driver_Error{code = 0, message = "sql: transaction already completed"},
+			query_str,
+			loc,
+		)
 	}
 
 	handle, err := tx.driver.query(tx.conn_handle, query_str, args)
-	if err != nil {return {}, err}
+	if err != nil {return {}, with_query(err, query_str, loc)}
 
-	return Rows{db = nil, conn = tx.conn_handle, handle = handle, driver = tx.driver}, nil
+	return Rows {
+			db = nil,
+			conn = tx.conn_handle,
+			handle = handle,
+			driver = tx.driver,
+			query = query_str,
+			loc = loc,
+		}, nil
 }
 
 commit :: proc(tx: ^Tx) -> Error {

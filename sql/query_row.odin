@@ -1,5 +1,7 @@
 package sql
 
+import "base:runtime"
+
 // query_row executes a query expected to return at most one row.
 // It advances to the first row and eagerly releases the underlying
 // connection back to the pool (via detach_rows). Any query error or
@@ -19,7 +21,7 @@ package sql
 //   if err := sql.scan(&row, &user); err != nil { ... }
 
 @(private)
-db_query_row :: proc(db: ^DB, query_str: string, args: ..Value) -> Row {
+db_query_row :: proc(db: ^DB, query_str: string, args: ..Value, loc := #caller_location) -> Row {
 	conn, created_at, cerr := pool_acquire(db)
 	if cerr != nil {
 		return error_row(cerr)
@@ -28,7 +30,7 @@ db_query_row :: proc(db: ^DB, query_str: string, args: ..Value) -> Row {
 	handle, qerr := db.driver.query(conn, query_str, args)
 	if qerr != nil {
 		pool_release(db, conn, created_at)
-		return error_row(qerr)
+		return error_row(with_query(qerr, query_str, loc))
 	}
 
 	row := Row {
@@ -38,54 +40,91 @@ db_query_row :: proc(db: ^DB, query_str: string, args: ..Value) -> Row {
 			handle = handle,
 			driver = db.driver,
 			created_at = created_at,
+			query = query_str,
+			loc = loc,
 		},
 	}
 	if !next(&row.rows) {
-		rows_close(&row.rows)
-		return error_row(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""})
+		return error_row(first_row_error(&row.rows, query_str, loc))
 	}
 	detach_rows(&row.rows)
 	return row
 }
 
 @(private)
-conn_query_row :: proc(conn: ^Conn, query_str: string, args: ..Value) -> Row {
+conn_query_row :: proc(
+	conn: ^Conn,
+	query_str: string,
+	args: ..Value,
+	loc := #caller_location,
+) -> Row {
 	handle, qerr := conn.driver.query(conn.handle, query_str, args)
 	if qerr != nil {
-		return error_row(qerr)
+		return error_row(with_query(qerr, query_str, loc))
 	}
 
 	row := Row {
-		rows = {db = nil, conn = conn.handle, handle = handle, driver = conn.driver},
+		rows = {
+			db = nil,
+			conn = conn.handle,
+			handle = handle,
+			driver = conn.driver,
+			query = query_str,
+			loc = loc,
+		},
 	}
 	if !next(&row.rows) {
-		rows_close(&row.rows)
-		return error_row(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""})
+		return error_row(first_row_error(&row.rows, query_str, loc))
 	}
 	detach_rows(&row.rows)
 	return row
 }
 
 @(private)
-tx_query_row :: proc(tx: ^Tx, query_str: string, args: ..Value) -> Row {
+tx_query_row :: proc(tx: ^Tx, query_str: string, args: ..Value, loc := #caller_location) -> Row {
 	if tx.done {
-		return error_row(Driver_Error{code = 0, message = "sql: transaction already completed"})
+		return error_row(
+			with_query(
+				Driver_Error{code = 0, message = "sql: transaction already completed"},
+				query_str,
+				loc,
+			),
+		)
 	}
 
 	handle, qerr := tx.driver.query(tx.conn_handle, query_str, args)
 	if qerr != nil {
-		return error_row(qerr)
+		return error_row(with_query(qerr, query_str, loc))
 	}
 
 	row := Row {
-		rows = {db = nil, conn = tx.conn_handle, handle = handle, driver = tx.driver},
+		rows = {
+			db = nil,
+			conn = tx.conn_handle,
+			handle = handle,
+			driver = tx.driver,
+			query = query_str,
+			loc = loc,
+		},
 	}
 	if !next(&row.rows) {
-		rows_close(&row.rows)
-		return error_row(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""})
+		return error_row(first_row_error(&row.rows, query_str, loc))
 	}
 	detach_rows(&row.rows)
 	return row
+}
+
+// first_row_error closes a Rows whose first next() returned false and picks
+// the error to store in the Row: a real mid-stream/driver error (already
+// annotated by next()) wins over the generic "no rows" diagnosis.
+@(private)
+first_row_error :: proc(rows: ^Rows, query_str: string, loc: runtime.Source_Code_Location) -> Error {
+	iter_err := rows.err
+	rows_close(rows)
+	if iter_err != nil {
+		return iter_err
+	}
+	return with_query(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}, query_str, loc)
 }
 
 // error_row builds a Row whose embedded Rows is pre-closed, so callers

@@ -159,6 +159,37 @@ so read or copy it before issuing another query on the same conn.
 Single-row reads don't need this: `query_row` calls `next` once and surfaces any
 error through `Row.err` at `scan` time (see below).
 
+### Error context: the failing query + call site travel with the error
+
+Every error that passes back through the `sql` layer is annotated with the SQL
+text that caused it and the application call site that issued it. The struct
+variants of `Error` (`Driver_Error`, `Arg_Error`, `Scan_Error`) embed (`using`)
+a shared `Error_Ctx { query, loc }`; the public entry points (`exec`, `query`,
+`query_row`, `prepare`, `stmt_exec`, `stmt_query`, `scan`) capture `loc :=
+#caller_location` — the same pattern `core:mem` and `core:log` use — and stamp
+both fields onto outgoing errors via a private `with_query` helper.
+`err_to_string` renders them as `query:` / `at:` lines after the base message.
+
+Key properties of this design:
+
+- **Drivers are untouched.** Annotation happens only at the `sql`-layer
+  boundary; drivers keep returning bare errors and the contract stays stable. A
+  zero `Error_Ctx` just means "not attached" (`error_ctx` / `error_query` are
+  the accessors).
+- **Deferred errors keep their context.** `Stmt` and `Rows` retain the query
+  string (and `Rows` the originating call site), so a `stmt_exec` failure, a
+  mid-stream `rows_err`, or a `scan` mismatch reports the query even though the
+  original call has long returned. Scan errors use the *scan* call site, which
+  is where the mismatch actually lives.
+- **The query string is borrowed, not cloned** — same philosophy as row values
+  and error messages. Safe by construction for the immediate error return, and
+  for string literals (the overwhelmingly common case) forever; callers that
+  build query strings dynamically must keep them alive for the lifetime of a
+  `Stmt`/`Rows` handle, which the driver layer effectively required anyway.
+- `Pool_Error` stays a bare enum and carries no context: a pool timeout is not
+  a property of the query, and keeping it an enum preserves
+  `err == Pool_Error.Timeout` comparisons.
+
 ### `query_row` and `Row`
 
 `query_row` is a convenience for single-row reads. Internally it acquires a

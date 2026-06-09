@@ -24,9 +24,13 @@ import "core:time"
 //       sql.scan(&rows, &user)
 //   }
 //   if err := sql.rows_err(&rows); err != nil { /* iteration failed mid-stream */ }
-scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_struct(T) {
+scan_struct :: proc(
+	rows: ^Rows,
+	dest: ^$T,
+	loc := #caller_location,
+) -> Error where intrinsics.type_is_struct(T) {
 	if !rows.has_row {
-		return Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}
+		return with_query(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}, rows.query, loc)
 	}
 
 	info := runtime.type_info_base(type_info_of(T))
@@ -43,13 +47,17 @@ scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_st
 					rows._values[ci],
 					rows._detached,
 				); !ok {
-					return Scan_Error {
-						kind = .Column_Type_Mismatch,
-						col_idx = ci,
-						col_name = col_name,
-						dest_type = type_of(dest^),
-						value_type = vtype,
-					}
+					return with_query(
+						Scan_Error {
+							kind = .Column_Type_Mismatch,
+							col_idx = ci,
+							col_name = col_name,
+							dest_type = type_of(dest^),
+							value_type = vtype,
+						},
+						rows.query,
+						loc,
+					)
 				}
 				break
 			}
@@ -78,18 +86,28 @@ scan_struct :: proc(rows: ^Rows, dest: ^$T) -> Error where intrinsics.type_is_st
 //       sql.scan(&rows, &name, &age)
 //   }
 //   if err := sql.rows_err(&rows); err != nil { /* iteration failed mid-stream */ }
-scan_values :: proc(rows: ^Rows, dests: ..any) -> Error {
-	return scan_values_impl(rows, dests)
+scan_values :: proc(rows: ^Rows, dests: ..any, loc := #caller_location) -> Error {
+	return scan_values_impl(rows, dests, loc)
 }
 
 @(private)
-scan_values_impl :: proc(rows: ^Rows, dests: []any) -> Error {
+scan_values_impl :: proc(rows: ^Rows, dests: []any, loc: runtime.Source_Code_Location) -> Error {
 	if !rows.has_row {
-		return Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}
+		return with_query(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}, rows.query, loc)
 	}
 
 	if len(dests) != rows.col_count {
-		return Scan_Error{kind = .Column_Count_Mismatch, col_idx = -1, col_name = ""}
+		return with_query(
+			Scan_Error {
+				kind = .Column_Count_Mismatch,
+				col_idx = -1,
+				col_name = "",
+				cols_got = len(dests),
+				cols_expected = rows.col_count,
+			},
+			rows.query,
+			loc,
+		)
 	}
 
 	for i in 0 ..< len(dests) {
@@ -97,24 +115,32 @@ scan_values_impl :: proc(rows: ^Rows, dests: []any) -> Error {
 		ptr_info := runtime.type_info_base(type_info_of(d.id))
 		p, ok := ptr_info.variant.(runtime.Type_Info_Pointer)
 		if !ok {
-			return Scan_Error {
-				kind = .Dest_Not_Pointer,
-				col_idx = i,
-				col_name = rows._cols[i].name,
-				dest_type = d.id,
-				value_type = rows._cols[i].type_id,
-			}
+			return with_query(
+				Scan_Error {
+					kind = .Dest_Not_Pointer,
+					col_idx = i,
+					col_name = rows._cols[i].name,
+					dest_type = d.id,
+					value_type = rows._cols[i].type_id,
+				},
+				rows.query,
+				loc,
+			)
 		}
 		dest_ptr := (^rawptr)(d.data)^
 		if vtype, ok := set_field(dest_ptr, 0, p.elem.id, rows._values[i], rows._detached);
 		   !ok {
-			return Scan_Error {
-				kind = .Column_Type_Mismatch,
-				col_idx = i,
-				col_name = rows._cols[i].name,
-				dest_type = d.id,
-				value_type = vtype,
-			}
+			return with_query(
+				Scan_Error {
+					kind = .Column_Type_Mismatch,
+					col_idx = i,
+					col_name = rows._cols[i].name,
+					dest_type = d.id,
+					value_type = vtype,
+				},
+				rows.query,
+				loc,
+			)
 		}
 	}
 
@@ -125,18 +151,22 @@ scan_values_impl :: proc(rows: ^Rows, dests: []any) -> Error {
 // The Row's underlying connection is already released, so this
 // only reads from buffered values. If the Row carries an error
 // (query failure or no rows), it is returned immediately.
-row_scan_struct :: proc(row: ^Row, dest: ^$T) -> Error where intrinsics.type_is_struct(T) {
+row_scan_struct :: proc(
+	row: ^Row,
+	dest: ^$T,
+	loc := #caller_location,
+) -> Error where intrinsics.type_is_struct(T) {
 	if row.err != nil {return row.err}
-	return scan_struct(&row.rows, dest)
+	return scan_struct(&row.rows, dest, loc)
 }
 
 // row_scan_values scans from a Row (returned by query_row).
 // The Row's underlying connection is already released, so this
 // only reads from buffered values. If the Row carries an error,
 // it is returned immediately.
-row_scan_values :: proc(row: ^Row, dests: ..any) -> Error {
+row_scan_values :: proc(row: ^Row, dests: ..any, loc := #caller_location) -> Error {
 	if row.err != nil {return row.err}
-	return scan_values_impl(&row.rows, dests)
+	return scan_values_impl(&row.rows, dests, loc)
 }
 
 scan :: proc {

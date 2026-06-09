@@ -13,6 +13,7 @@ Tx_Options :: drv.Tx_Options
 Isolation_Level :: drv.Isolation_Level
 
 Error :: drv.Error
+Error_Ctx :: drv.Error_Ctx
 Driver_Error :: drv.Driver_Error
 Pool_Error :: drv.Pool_Error
 Arg_Error :: drv.Arg_Error
@@ -22,3 +23,5 @@ Scan_Error_Kind :: drv.Scan_Error_Kind
 Custom_Value :: drv.Custom_Value
 
 err_to_string :: drv.err_to_string
+error_ctx :: drv.error_ctx
+error_query :: drv.error_query

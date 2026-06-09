@@ -49,8 +49,8 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 
-import drv "database:sql/driver"
 import ddb "database:bindings/duckdb/duckdb"
+import drv "database:sql/driver"
 
 // --- Driver vtable (public) ---
 
@@ -79,11 +79,11 @@ driver := drv.Driver {
 // --- Internal wrapper types ---
 
 Duck_Conn :: struct {
-	db:        ddb.Database, // file DSN: cache-owned (shared). in-memory: conn-owned.
-	con:       ddb.Connection, // owned by this conn
-	allocator: mem.Allocator,
-	cache:     ^Duck_Cache, // non-nil only for shared (file) DSNs; nil = conn owns db
-	dsn:       string, // owned cache key used to release `db`; set only when cache != nil
+	db:         ddb.Database, // file DSN: cache-owned (shared). in-memory: conn-owned.
+	con:        ddb.Connection, // owned by this conn
+	allocator:  mem.Allocator,
+	cache:      ^Duck_Cache, // non-nil only for shared (file) DSNs; nil = conn owns db
+	dsn:        string, // owned cache key used to release `db`; set only when cache != nil
 	// Holds the most recent error message. DuckDB's error strings live inside
 	// the result / prepared statement we destroy right away, so make_error
 	// clones the message here (freeing the previous one). Like SQLite's errmsg,
@@ -176,7 +176,11 @@ _cache_acquire :: proc(
 	}
 
 	key := strings.clone(dsn, _cache_allocator())
-	cache.entries[key] = Duck_Db_Entry{db = db, refcount = 1, key = key}
+	cache.entries[key] = Duck_Db_Entry {
+		db       = db,
+		refcount = 1,
+		key      = key,
+	}
 	return db, nil
 }
 
@@ -233,11 +237,11 @@ Col_Meta :: struct {
 }
 
 Duck_Rows :: struct {
-	res:       ddb.Result, // owned, materialized result (destroyed on close)
-	conn:      ^Duck_Conn,
-	cols:      []drv.Column, // allocated; names cloned into the same allocation block
-	col_count: int,
-	meta:      []Col_Meta,
+	res:        ddb.Result, // owned, materialized result (destroyed on close)
+	conn:       ^Duck_Conn,
+	cols:       []drv.Column, // allocated; names cloned into the same allocation block
+	col_count:  int,
+	meta:       []Col_Meta,
 
 	// Current data chunk plus the per-column vector data/validity pointers into
 	// it. Read via the modern duckdb_fetch_chunk path — no per-cell value_* calls
@@ -316,7 +320,11 @@ bind_args :: proc(conn: ^Duck_Conn, stmt: ddb.Prepared_Statement, args: []drv.Va
 			// Custom_Value is a read-side carrier (e.g. DECIMAL cells); it isn't a
 			// meaningful query parameter. Surface that rather than silently binding
 			// NULL — bind a DECIMAL via a string + CAST instead.
-			return drv.Arg_Error{kind = .Invalid_Type, arg_idx = i, value_type = typeid_of(drv.Custom_Value)}
+			return drv.Arg_Error {
+				kind = .Invalid_Type,
+				arg_idx = i,
+				value_type = typeid_of(drv.Custom_Value),
+			}
 		case drv.Null:
 			st = ddb.bind_null(stmt, idx)
 		case:
@@ -350,8 +358,14 @@ type_id_for :: proc(t: ddb.Type) -> typeid {
 		return typeid_of(f64)
 	case .BLOB:
 		return typeid_of([]byte)
-	case .TIMESTAMP, .TIMESTAMP_S, .TIMESTAMP_MS, .TIMESTAMP_NS, .TIMESTAMP_TZ,
-	     .DATE, .TIME, .TIME_TZ:
+	case .TIMESTAMP,
+	     .TIMESTAMP_S,
+	     .TIMESTAMP_MS,
+	     .TIMESTAMP_NS,
+	     .TIMESTAMP_TZ,
+	     .DATE,
+	     .TIME,
+	     .TIME_TZ:
 		return typeid_of(time.Time)
 	case .VARCHAR:
 		return typeid_of(string)
@@ -469,7 +483,12 @@ make_uuid_cell :: proc(raw: i128) -> drv.Custom_Value {
 }
 
 @(private)
-uuid_convert :: proc(payload: rawptr, dest_type: typeid, dest: rawptr, allocator: mem.Allocator) -> bool {
+uuid_convert :: proc(
+	payload: rawptr,
+	dest_type: typeid,
+	dest: rawptr,
+	allocator: mem.Allocator,
+) -> bool {
 	// Undo DuckDB's sign-bit flip to get the canonical 128-bit value (big-endian).
 	u := transmute(u128)((^i128)(payload)^)
 	u ~= u128(1) << 127
@@ -519,13 +538,22 @@ Interval :: struct {
 @(private)
 make_interval_cell :: proc(iv: ddb.Interval) -> drv.Custom_Value {
 	cv: drv.Custom_Value
-	(^Interval)(&cv.storage)^ = Interval{months = iv.months, days = iv.days, micros = iv.micros}
+	(^Interval)(&cv.storage)^ = Interval {
+		months = iv.months,
+		days   = iv.days,
+		micros = iv.micros,
+	}
 	cv.convert = interval_convert
 	return cv
 }
 
 @(private)
-interval_convert :: proc(payload: rawptr, dest_type: typeid, dest: rawptr, allocator: mem.Allocator) -> bool {
+interval_convert :: proc(
+	payload: rawptr,
+	dest_type: typeid,
+	dest: rawptr,
+	allocator: mem.Allocator,
+) -> bool {
 	iv := (^Interval)(payload)
 	switch dest_type {
 	case Interval:
@@ -743,25 +771,39 @@ read_vector_cell :: proc(data: rawptr, m: Col_Meta, row: u64, dest: ^drv.Value) 
 		dest^ = m.enum_dict[idx] if int(idx) < len(m.enum_dict) else drv.Null{}
 	case .TIMESTAMP, .TIMESTAMP_TZ:
 		// micros since epoch (TIMESTAMP_TZ stores the UTC instant).
-		dest^ = time.Time{_nsec = ([^]i64)(data)[row] * 1000}
+		dest^ = time.Time {
+			_nsec = ([^]i64)(data)[row] * 1000,
+		}
 	case .TIMESTAMP_S:
-		dest^ = time.Time{_nsec = ([^]i64)(data)[row] * 1_000_000_000}
+		dest^ = time.Time {
+			_nsec = ([^]i64)(data)[row] * 1_000_000_000,
+		}
 	case .TIMESTAMP_MS:
-		dest^ = time.Time{_nsec = ([^]i64)(data)[row] * 1_000_000}
+		dest^ = time.Time {
+			_nsec = ([^]i64)(data)[row] * 1_000_000,
+		}
 	case .TIMESTAMP_NS:
-		dest^ = time.Time{_nsec = ([^]i64)(data)[row]}
+		dest^ = time.Time {
+			_nsec = ([^]i64)(data)[row],
+		}
 	case .DATE:
-		dest^ = time.Time{_nsec = i64(([^]i32)(data)[row]) * 86_400 * 1_000_000_000}
+		dest^ = time.Time {
+			_nsec = i64(([^]i32)(data)[row]) * 86_400 * 1_000_000_000,
+		}
 	case .TIME:
 		// micros since midnight.
-		dest^ = time.Time{_nsec = ([^]i64)(data)[row] * 1000}
+		dest^ = time.Time {
+			_nsec = ([^]i64)(data)[row] * 1000,
+		}
 	case .TIME_TZ:
 		// Packed 40-bit micros + 24-bit offset; normalize to the UTC instant.
 		s := ddb.from_time_tz(([^]ddb.Time_Tz)(data)[row])
 		day_us :=
 			(i64(s.time.hour) * 3600 + i64(s.time.min) * 60 + i64(s.time.sec)) * 1_000_000 +
 			i64(s.time.micros)
-		dest^ = time.Time{_nsec = (day_us - i64(s.offset) * 1_000_000) * 1000}
+		dest^ = time.Time {
+			_nsec = (day_us - i64(s.offset) * 1_000_000) * 1000,
+		}
 	case .INVALID, .LIST, .STRUCT, .MAP, .ARRAY, .UNION, .BIT, .ANY, .VARINT, .SQLNULL:
 		dest^ = unsupported_cell(m.type)
 	case:
@@ -808,7 +850,8 @@ Composite_Payload :: struct {
 // (cloned later by scan or composite_clone).
 @(private)
 build_node :: proc(vec: ddb.Vector, lt: ddb.Logical_Type, row: u64, a: mem.Allocator) -> Node {
-	if v := ddb.vector_get_validity(vec); v != nil && !ddb.validity_row_is_valid(v, ddb.Idx_T(row)) {
+	if v := ddb.vector_get_validity(vec);
+	   v != nil && !ddb.validity_row_is_valid(v, ddb.Idx_T(row)) {
 		return Node{kind = .Scalar, scalar = drv.Null{}}
 	}
 	t := ddb.get_type_id(lt)
@@ -910,7 +953,12 @@ build_composite_cell :: proc(
 }
 
 @(private)
-composite_convert :: proc(payload: rawptr, dest_type: typeid, dest: rawptr, allocator: mem.Allocator) -> bool {
+composite_convert :: proc(
+	payload: rawptr,
+	dest_type: typeid,
+	dest: rawptr,
+	allocator: mem.Allocator,
+) -> bool {
 	return map_node((^Composite_Payload)(payload).root^, dest_type, dest, allocator)
 }
 
@@ -1238,10 +1286,36 @@ make_col_meta :: proc(lt: ddb.Logical_Type, t: ddb.Type, a: mem.Allocator) -> (m
 		for j in 0 ..< n {
 			m.enum_dict[j] = strings.clone(string(ddb.enum_dictionary_value(lt, ddb.Idx_T(j))), a)
 		}
-	case .INVALID, .BOOLEAN, .TINYINT, .SMALLINT, .INTEGER, .BIGINT, .UTINYINT, .USMALLINT,
-	     .UINTEGER, .UBIGINT, .FLOAT, .DOUBLE, .TIMESTAMP, .DATE, .TIME, .INTERVAL, .HUGEINT,
-	     .UHUGEINT, .VARCHAR, .BLOB, .TIMESTAMP_S, .TIMESTAMP_MS, .TIMESTAMP_NS, .UUID, .BIT,
-	     .TIME_TZ, .TIMESTAMP_TZ, .ANY, .VARINT, .SQLNULL:
+	case .INVALID,
+	     .BOOLEAN,
+	     .TINYINT,
+	     .SMALLINT,
+	     .INTEGER,
+	     .BIGINT,
+	     .UTINYINT,
+	     .USMALLINT,
+	     .UINTEGER,
+	     .UBIGINT,
+	     .FLOAT,
+	     .DOUBLE,
+	     .TIMESTAMP,
+	     .DATE,
+	     .TIME,
+	     .INTERVAL,
+	     .HUGEINT,
+	     .UHUGEINT,
+	     .VARCHAR,
+	     .BLOB,
+	     .TIMESTAMP_S,
+	     .TIMESTAMP_MS,
+	     .TIMESTAMP_NS,
+	     .UUID,
+	     .BIT,
+	     .TIME_TZ,
+	     .TIMESTAMP_TZ,
+	     .ANY,
+	     .VARINT,
+	     .SQLNULL:
 	// Scalar / self-describing: nothing extra to cache.
 	case .LIST, .STRUCT, .MAP, .ARRAY, .UNION:
 		// Composite: retain the logical type so the reader can walk child types.
@@ -1449,13 +1523,7 @@ duckdb_query :: proc(
 
 // prepare_stmt compiles a query, mapping a prepare failure to a Driver_Error.
 @(private)
-prepare_stmt :: proc(
-	conn: ^Duck_Conn,
-	query_str: string,
-) -> (
-	ddb.Prepared_Statement,
-	drv.Error,
-) {
+prepare_stmt :: proc(conn: ^Duck_Conn, query_str: string) -> (ddb.Prepared_Statement, drv.Error) {
 	cq := strings.clone_to_cstring(query_str, conn.allocator)
 	defer mem.free(rawptr(cq), conn.allocator)
 

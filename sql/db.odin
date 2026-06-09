@@ -179,24 +179,42 @@ ping :: proc(db: ^DB) -> Error {
 }
 
 @(private)
-db_exec :: proc(db: ^DB, query_str: string, args: ..Value) -> (Result, Error) {
+db_exec :: proc(
+	db: ^DB,
+	query_str: string,
+	args: ..Value,
+	loc := #caller_location,
+) -> (
+	Result,
+	Error,
+) {
 	conn, created_at, err := pool_acquire(db)
 	if err != nil {return {}, err}
 	defer pool_release(db, conn, created_at)
-	return db.driver.exec(conn, query_str, args)
+	result, eerr := db.driver.exec(conn, query_str, args)
+	if eerr != nil {return {}, with_query(eerr, query_str, loc)}
+	return result, nil
 }
 
 // Convenience query — the returned Rows owns the connection and
 // releases it back to the pool on close_rows().
 @(private)
-db_query :: proc(db: ^DB, query_str: string, args: ..Value) -> (Rows, Error) {
+db_query :: proc(
+	db: ^DB,
+	query_str: string,
+	args: ..Value,
+	loc := #caller_location,
+) -> (
+	Rows,
+	Error,
+) {
 	conn, created_at, cerr := pool_acquire(db)
 	if cerr != nil {return {}, cerr}
 
 	handle, qerr := db.driver.query(conn, query_str, args)
 	if qerr != nil {
 		pool_release(db, conn, created_at)
-		return {}, qerr
+		return {}, with_query(qerr, query_str, loc)
 	}
 
 	return Rows {
@@ -205,6 +223,8 @@ db_query :: proc(db: ^DB, query_str: string, args: ..Value) -> (Rows, Error) {
 			handle     = handle,
 			driver     = db.driver,
 			created_at = created_at,
+			query      = query_str,
+			loc        = loc,
 		}, nil
 }
 
