@@ -91,14 +91,16 @@ main :: proc() {
 		row := sql.query_row(db, "SELECT * FROM trades ORDER BY price DESC LIMIT 1")
 		defer sql.close_row(&row)
 		t: Trade
-		if err := sql.scan(&row, &t); err != nil {
+		if err := sql.row_scan_struct(&row, &t); err != nil {
 			fmt.eprintfln("scan: %v", err)
 			return
 		}
 		fmt.printfln("  #%v  %v  %v @ %.2f", t.id, t.symbol, t.qty, t.price)
 	}
 
-	// query + reflective scan: column names matched to struct field names.
+	// query + reflective struct scan (explicit scan_struct): column names matched
+	// to struct field names. Reflection is opt-in — sql.scan() is positional-only;
+	// scangen generates concrete scanners for annotated structs.
 	fmt.println("\n--- all trades (reflective struct scan) ---")
 	{
 		rows, err := sql.query(db, "SELECT id, symbol, qty, price FROM trades ORDER BY id")
@@ -110,7 +112,7 @@ main :: proc() {
 
 		for sql.next(&rows) {
 			t: Trade
-			if serr := sql.scan(&rows, &t); serr != nil {
+			if serr := sql.scan_struct(&rows, &t); serr != nil {
 				fmt.eprintfln("scan: %v", serr)
 				return
 			}

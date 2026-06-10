@@ -4,9 +4,10 @@
 // Usage:
 //   odin run tools/scangen -- <pkg-dir>
 //
-// For each annotated struct in <pkg-dir>, emits a `scan_<TypeName>` proc
-// in <pkg-dir>/scan.gen.odin, plus a `scan_row :: proc{...}` overload set
-// covering all annotated structs in the package.
+// For each annotated struct in <pkg-dir>, emits `scan_<TypeName>` (^Rows)
+// and `scan_<TypeName>_row` (^Row, for query_row) procs in
+// <pkg-dir>/scan.gen.odin, plus a `scan :: proc{...}` overload set covering
+// all annotated structs in the package.
 //
 // User code:
 //
@@ -19,19 +20,31 @@
 //
 // becomes generated code:
 //
-//   scan_User :: proc(rows: ^sql.Rows, dest: ^User) -> sql.Error { ... }
+//   scan_User     :: proc(rows: ^sql.Rows, dest: ^User) -> sql.Error { ... }
+//   scan_User_row :: proc(row: ^sql.Row, dest: ^User) -> sql.Error { ... }
 //   scan :: proc{
-//       scan_User,                // codegen: concrete dispatch wins for ^User
-//       sql.scan_struct,          // reflection fallback for any other ^$T
-//       sql.scan_values,          // positional `scan(rows, &a, &b, ...)`
-//       sql.row_scan_struct,      // ^Row variants for query_row
+//       scan_User,                    // concrete dispatch for ^User
+//       scan_User_row,                // ^Row variant for query_row
+//       sql.scan_values,              // positional `scan(rows, &a, &b, ...)`
 //       sql.row_scan_values,
+//       _scan_no_generated_scanner,   // unannotated struct dest = compile error
+//       _row_scan_no_generated_scanner,
 //   }
 //
-// User code can then write `scan(&rows, &user)` regardless of whether the
-// destination type is annotated — Odin's overload resolution picks the
-// concrete generated proc when one exists, otherwise falls back to the
-// reflective sql.scan_struct.
+// User code can then write `scan(&rows, &user)` for any annotated struct.
+// The reflective sql.scan_struct / sql.row_scan_struct are intentionally NOT
+// in the set: overload resolution would route every struct destination
+// through reflection (silently skipping mismatched columns) even when no
+// concrete scanner exists. An unannotated struct destination is a
+// compile-time error instead, via emitted guard overloads — annotate the
+// struct, or call sql.scan_struct explicitly.
+//
+// The guards must be emitted per package (rather than reusing the
+// sql-level scan_struct_dest_guard): their where clauses exclude the
+// package's annotated types, because overload resolution type-checks every
+// *matching* candidate — a guard that matched ^User would fire its #assert
+// even though the concrete scan_User wins. time.Time is excluded too, so a
+// lone time.Time destination scans positionally via sql.scan_values.
 //
 // Limitations (MVP):
 //   - Field name must equal column name (no struct-tag renaming yet).
@@ -192,8 +205,11 @@ emit :: proc(pkg: ^Pkg_Spec) -> string {
 	w(&b, pkg.pkg_name)
 	w(&b, "\n\n")
 
+	// base:intrinsics and core:time are always used by the emitted guard
+	// overloads (see emit_guards), independent of the structs' field types.
+	w(&b, "import \"base:intrinsics\"\n")
 	if pkg.uses_strings {w(&b, "import \"core:strings\"\n")}
-	if pkg.uses_time {w(&b, "import \"core:time\"\n")}
+	w(&b, "import \"core:time\"\n")
 	w(&b, "import sql \"database:sql\"\n\n")
 
 	for i in 0 ..< len(pkg.structs) {
@@ -201,23 +217,64 @@ emit :: proc(pkg: ^Pkg_Spec) -> string {
 		w(&b, "\n")
 	}
 
-	// Unified overload set: generated concrete procs first, then the four
-	// public sql procs as the reflective fallback.
+	// Unified overload set: generated concrete procs (Rows + Row variants),
+	// then the positional sql procs, then guards that make an *unannotated*
+	// struct destination a compile-time error instead of a silent
+	// fall-through to positional scanning. Reflection (sql.scan_struct /
+	// sql.row_scan_struct) is deliberately excluded — see the header comment.
 	if len(pkg.structs) > 0 {
 		w(&b, "scan :: proc{\n")
 		for spec in pkg.structs {
 			w(&b, "\tscan_")
 			w(&b, spec.name)
 			w(&b, ",\n")
+			w(&b, "\tscan_")
+			w(&b, spec.name)
+			w(&b, "_row,\n")
 		}
-		w(&b, "\tsql.scan_struct,\n")
 		w(&b, "\tsql.scan_values,\n")
-		w(&b, "\tsql.row_scan_struct,\n")
 		w(&b, "\tsql.row_scan_values,\n")
+		w(&b, "\t_scan_no_generated_scanner,\n")
+		w(&b, "\t_row_scan_no_generated_scanner,\n")
 		w(&b, "}\n")
+		emit_guards(&b, pkg)
 	}
 
 	return strings.to_string(b)
+}
+
+// emit_guards writes the compile-time guard overloads. Their where clauses
+// match pointer-to-struct destinations EXCEPT the package's annotated types
+// (whose concrete scanners must win resolution without the guard being
+// type-checked) and time.Time (a struct, but a legitimate positional
+// destination — it falls through to sql.scan_values).
+emit_guards :: proc(b: ^strings.Builder, pkg: ^Pkg_Spec) {
+	GUARD_MSG :: "no generated scanner for this struct — annotate it with //+sql:scan and re-run scangen, or call sql.scan_struct / sql.row_scan_struct for explicit reflection"
+
+	emit_where :: proc(b: ^strings.Builder, pkg: ^Pkg_Spec) {
+		ws(b, "\twhere intrinsics.type_is_struct(T), T != time.Time")
+		for spec in pkg.structs {
+			ws(b, ", T != ", spec.name)
+		}
+		ws(b, " {\n")
+	}
+
+	// The `loc := #caller_location` default mirrors sql.scan_values' trailing
+	// default — without it, overload scoring prefers the variadic candidate
+	// and the guard never participates.
+	ws(b, "\n@(private)\n")
+	ws(b, "_scan_no_generated_scanner :: proc(rows: ^sql.Rows, dest: ^$T, loc := #caller_location) -> sql.Error\n")
+	emit_where(b, pkg)
+	ws(b, "\t#assert(false, \"", GUARD_MSG, "\")\n")
+	ws(b, "\treturn nil\n")
+	ws(b, "}\n")
+
+	ws(b, "\n@(private)\n")
+	ws(b, "_row_scan_no_generated_scanner :: proc(row: ^sql.Row, dest: ^$T, loc := #caller_location) -> sql.Error\n")
+	emit_where(b, pkg)
+	ws(b, "\t#assert(false, \"", GUARD_MSG, "\")\n")
+	ws(b, "\treturn nil\n")
+	ws(b, "}\n")
 }
 
 // Helpers — explicit string concatenation rather than fmt.sbprintf so we
@@ -228,9 +285,9 @@ ws :: proc(b: ^strings.Builder, parts: ..string) {
 }
 
 emit_struct_proc :: proc(b: ^strings.Builder, spec: ^Struct_Spec) {
-	ws(b, "scan_", spec.name, " :: proc(rows: ^sql.Rows, dest: ^", spec.name, ") -> sql.Error {\n")
+	ws(b, "scan_", spec.name, " :: proc(rows: ^sql.Rows, dest: ^", spec.name, ", loc := #caller_location) -> sql.Error {\n")
 	ws(b, "\tif !rows.has_row {\n")
-	ws(b, "\t\treturn sql.Scan_Error{kind = .No_Row, col_idx = -1}\n")
+	ws(b, "\t\treturn sql.Scan_Error{kind = .No_Row, col_idx = -1, ctx = {query = rows.query, loc = loc}}\n")
 	ws(b, "\t}\n")
 	ws(b, "\tdetached := sql.row_detached(rows)\n")
 	ws(b, "\t_ = detached\n") // suppress "declared but not used" if no string/bytes fields
@@ -245,6 +302,15 @@ emit_struct_proc :: proc(b: ^strings.Builder, spec: ^Struct_Spec) {
 	ws(b, "\t\t}\n")
 	ws(b, "\t}\n")
 	ws(b, "\treturn nil\n")
+	ws(b, "}\n")
+
+	// ^Row variant for query_row: surface any stored query/no-row error,
+	// then scan the detached buffered row.
+	ws(b, "\nscan_", spec.name, "_row :: proc(row: ^sql.Row, dest: ^", spec.name, ", loc := #caller_location) -> sql.Error {\n")
+	ws(b, "\tif row.err != nil {\n")
+	ws(b, "\t\treturn row.err\n")
+	ws(b, "\t}\n")
+	ws(b, "\treturn scan_", spec.name, "(&row.rows, dest, loc)\n")
 	ws(b, "}\n")
 }
 

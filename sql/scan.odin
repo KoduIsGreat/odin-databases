@@ -8,7 +8,17 @@ import "core:strings"
 import "core:time"
 
 // scan_struct maps the current row's column values into struct fields
-// by matching column names to field names (exact match).
+// by matching column names to field names (exact match), using runtime
+// reflection.
+//
+// It is deliberately NOT part of the scan() overload set: overload
+// resolution would route *any* struct destination here — including ones
+// the caller meant as a single positional value (time.Time is a struct!)
+// — and unmatched columns are silently skipped, so a typo'd field name
+// degrades to "field left at zero value" instead of an error. Generated
+// concrete scanners (see tools/scangen) are the intended path for struct
+// mapping; call scan_struct explicitly when you want the reflective
+// fallback (quick prototyping, one-off structs).
 //
 // Fields with no matching column are left unchanged.
 // Columns with no matching field are silently skipped.
@@ -21,7 +31,7 @@ import "core:time"
 // Usage:
 //   for sql.next(&rows) {
 //       user: User
-//       sql.scan(&rows, &user)
+//       sql.scan_struct(&rows, &user)
 //   }
 //   if err := sql.rows_err(&rows); err != nil { /* iteration failed mid-stream */ }
 scan_struct :: proc(
@@ -147,10 +157,13 @@ scan_values_impl :: proc(rows: ^Rows, dests: []any, loc: runtime.Source_Code_Loc
 	return nil
 }
 
-// row_scan_struct scans from a Row (returned by query_row).
+// row_scan_struct scans from a Row (returned by query_row) by reflection.
 // The Row's underlying connection is already released, so this
 // only reads from buffered values. If the Row carries an error
 // (query failure or no rows), it is returned immediately.
+//
+// Like scan_struct, it is NOT part of the scan() overload set — call it
+// explicitly (or use a scangen-generated concrete scanner).
 row_scan_struct :: proc(
 	row: ^Row,
 	dest: ^$T,
@@ -169,11 +182,61 @@ row_scan_values :: proc(row: ^Row, dests: ..any, loc := #caller_location) -> Err
 	return scan_values_impl(&row.rows, dests, loc)
 }
 
+// scan reads the current row positionally into pointer destinations.
+// Struct mapping is intentionally excluded from this overload set —
+// use a scangen-generated scanner, or call scan_struct / row_scan_struct
+// explicitly for the reflective fallback (see scan_struct's doc comment
+// for why). A struct destination is rejected at compile time by the
+// guard overloads below.
 scan :: proc {
-	row_scan_struct,
 	row_scan_values,
-	scan_struct,
 	scan_values,
+	scan_struct_dest_guard,
+	row_scan_struct_dest_guard,
+}
+
+// scan_struct_dest_guard turns `sql.scan(&rows, &some_struct)` into a
+// compile-time error instead of a confusing runtime mismatch: a lone
+// pointer-to-struct destination would otherwise silently match
+// scan_values' `..any` and fail positionally. Polymorphic `^$T` is more
+// specific than `..any`, so this overload intercepts struct destinations;
+// the #assert fires on instantiation with a message naming the type.
+//
+// time.Time is excluded in the where clause — it is a struct, but a
+// legitimate positional destination — so it falls through to scan_values
+// and scans positionally. Other intentional positional struct
+// destinations (e.g. a driver Custom_Value converting a composite into an
+// Odin struct) can call sql.scan_values directly, which is unguarded.
+//
+// Note for generated code: scangen emits its own package-local guards
+// whose where clauses also exclude the package's annotated types (a
+// where-clause mismatch keeps the guard out of overload resolution
+// entirely; anything that *does* match gets type-checked, so the #assert
+// would otherwise fire even when a concrete scanner wins).
+scan_struct_dest_guard :: proc(
+	rows: ^Rows,
+	dest: ^$T,
+	loc := #caller_location, // matches scan_values' trailing default — without it, overload scoring prefers the variadic and the guard never fires
+) -> Error where intrinsics.type_is_struct(T), T != time.Time {
+	#assert(
+		false,
+		"sql.scan does not map structs — use a scangen-generated scanner, or sql.scan_struct for explicit reflection (sql.scan_values for an intentional positional struct destination)",
+	)
+	return nil // unreachable; satisfies the return-path check
+}
+
+// row_scan_struct_dest_guard is the ^Row (query_row) variant of
+// scan_struct_dest_guard — see its doc comment.
+row_scan_struct_dest_guard :: proc(
+	row: ^Row,
+	dest: ^$T,
+	loc := #caller_location, // see scan_struct_dest_guard
+) -> Error where intrinsics.type_is_struct(T), T != time.Time {
+	#assert(
+		false,
+		"sql.scan does not map structs — use a scangen-generated scanner, or sql.row_scan_struct for explicit reflection (sql.row_scan_values for an intentional positional struct destination)",
+	)
+	return nil // unreachable; satisfies the return-path check
 }
 
 // set_field writes a column value into the field at base+offset, coercing

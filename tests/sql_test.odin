@@ -115,6 +115,28 @@ test_scan_error_carries_query :: proc(t: ^testing.T) {
 	)
 }
 
+// A lone time.Time destination scans positionally through sql.scan: it is a
+// struct, but the struct-dest guard's where clause excludes it, so it falls
+// through to scan_values. Locks the carve-out in scan_struct_dest_guard —
+// if the guard ever matched time.Time, this would be a compile error.
+@(test)
+test_time_dest_scans_positionally :: proc(t: ^testing.T) {
+	m, db := mock.open(t)
+	defer mock.close(m, db)
+
+	want := time.Time{_nsec = 1_700_000_000 * 1e9}
+	mock.returns_rows(mock.expect_query(m, "SELECT"), {"at"}, {{want}})
+
+	rows, qerr := sql.query(db, "SELECT at FROM ts")
+	testing.expect_value(t, qerr, nil)
+	defer sql.rows_close(&rows)
+
+	testing.expect(t, sql.next(&rows), "expected a row")
+	got: time.Time
+	testing.expect_value(t, sql.scan(&rows, &got), nil)
+	testing.expect_value(t, got._nsec, want._nsec)
+}
+
 // A successful query_row + scan + close_row must leave nothing allocated.
 // Regression test: detach_rows used to mark the Row closed, so close_row
 // no-op'd and leaked the cloned column buffers/names on every query_row call.
@@ -139,7 +161,7 @@ test_query_row_no_leak :: proc(t: ^testing.T) {
 		defer sql.close_row(&row)
 
 		u: UserRow
-		err := sql.scan(&row, &u)
+		err := sql.row_scan_struct(&row, &u)
 		testing.expect_value(t, err, nil)
 		testing.expect_value(t, u.id, 1)
 		testing.expect_value(t, u.name, "Alice")
@@ -271,7 +293,7 @@ test_scan_integer_into_float :: proc(t: ^testing.T) {
 
 	testing.expect(t, sql.next(&rows), "expected a row")
 	r: Row
-	testing.expect_value(t, sql.scan(&rows, &r), nil)
+	testing.expect_value(t, sql.scan_struct(&rows, &r), nil)
 	testing.expect_value(t, r.n, f64(42))
 }
 

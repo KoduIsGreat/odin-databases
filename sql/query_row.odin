@@ -18,7 +18,8 @@ import "base:runtime"
 //   row := sql.query_row(db, "SELECT * FROM users WHERE id = ?", i64(1))
 //   defer sql.close_row(&row)
 //   user: User
-//   if err := sql.scan(&row, &user); err != nil { ... }
+//   if err := sql.row_scan_struct(&row, &user); err != nil { ... }
+//   // (or a scangen-generated scan; sql.scan(&row, &a, &b) scans positionally)
 
 @(private)
 db_query_row :: proc(db: ^DB, query_str: string, args: ..Value, loc := #caller_location) -> Row {

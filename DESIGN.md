@@ -200,7 +200,8 @@ strings/bytes and releases the conn back to the pool), and returns a `Row`.
 row := sql.query_row(db, "SELECT * FROM users WHERE id = ?", i64(1))
 defer sql.close_row(&row)
 user: User
-if err := sql.scan(&row, &user); err != nil { ... }
+if err := sql.row_scan_struct(&row, &user); err != nil { ... }
+// (or a scangen-generated scan; sql.scan(&row, &a, &b) scans positionally)
 ```
 
 `Row` is lazy-error: any query or "no rows" failure is held in `row.err` and
@@ -264,19 +265,58 @@ begin     :: proc{db_begin, conn_begin}
 The user writes `sql.exec(thing, query, args)` regardless of whether `thing` is
 `^DB`, `^Conn`, or `^Tx`. Individual implementations are `@(private)`.
 
-### Struct scanning via runtime type info
+### Struct scanning: explicit reflection, concrete scanners by default
 
-`scan(rows, &dest)` uses Odin's `runtime.Type_Info_Struct` to match column
-names to struct field names at runtime. It handles type coercion (e.g. `i64` →
-`int`, `i64` → `bool`) and optional fields: a nullable column scans into a
-`Maybe(T)` field — present values set the variant, SQL `NULL` leaves it `None`.
-Partial structs work — unmatched columns are skipped, unmatched fields keep
-their zero values.
+`sql.scan_struct(rows, &dest)` (and `sql.row_scan_struct` for `Row`) uses
+Odin's `runtime.Type_Info_Struct` to match column names to struct field names
+at runtime. It handles type coercion (e.g. `i64` → `int`, `i64` → `bool`) and
+optional fields: a nullable column scans into a `Maybe(T)` field — present
+values set the variant, SQL `NULL` leaves it `None`. Partial structs work —
+unmatched columns are skipped, unmatched fields keep their zero values.
 
-For a faster, allocation-light path, `tools/scangen` generates concrete
-`scan_<TypeName>` procs (see below). Odin's overload resolution picks the
-concrete generated proc when one exists and falls back to the reflective
-`sql.scan_struct` otherwise.
+The reflective procs are deliberately **not** part of the `sql.scan()` overload
+set (it is positional-only: `scan(&rows, &a, &b)`). Two reasons:
+
+- Overload resolution routes *any* struct destination through reflection —
+  including ones meant positionally (`time.Time` is a struct), which then
+  silently scans nothing rather than erroring.
+- "Unmatched columns are skipped" is the wrong default when a concrete
+  alternative exists: a typo'd field name degrades to a zero value instead of
+  a diagnostic.
+
+A lone struct destination doesn't silently degrade to positional scanning
+either: `scan(&rows, &some_struct)` is a **compile-time error**. The `scan`
+group includes guard overloads (`scan_struct_dest_guard` /
+`row_scan_struct_dest_guard`) — a polymorphic `^$T where
+intrinsics.type_is_struct(T)` is more specific than `scan_values`' `..any`, so
+struct destinations land on the guard, whose `#assert(false, ...)` names the
+type and says what to call instead. Three mechanical subtleties, learned the
+hard way:
+
+- `time.Time` is excluded in the guard's *where clause* (not handled in its
+  body), so it falls through to `scan_values` and scans positionally as a
+  plain value.
+- Overload resolution type-checks every candidate whose where clause matches,
+  so a guard must never *match* a type some other group member should win —
+  the `#assert` fires during that trial type-check regardless of which
+  overload is selected. This is why exclusions live in the where clause, and
+  why scangen emits per-package guards excluding its annotated types rather
+  than reusing the sql-level guard.
+- The guard carries the same trailing `loc := #caller_location` default as
+  `scan_values`; without it, overload scoring prefers the variadic candidate
+  and the guard never participates.
+
+Limits: a struct hidden in a *multi*-destination call (`scan(&rows, &id,
+&user)`) can't be caught at compile time — `..any` erases types — and fails at
+runtime with an annotated `Column_Type_Mismatch`. An intentional positional
+struct destination (e.g. a driver `Custom_Value` converting a composite into
+an Odin struct) calls `sql.scan_values` directly, which is unguarded.
+
+The intended path for struct mapping is `tools/scangen`, which generates
+concrete `scan_<TypeName>` (^Rows) and `scan_<TypeName>_row` (^Row) procs plus
+a package-local `scan` overload set covering them (see below) — annotated
+structs get compile-time-checked, allocation-light scanners. Reflection is the
+explicit opt-in fallback for quick prototyping or one-off structs.
 
 ### Thread safety
 
@@ -417,9 +457,17 @@ emitting Odin source. They compose: run `schemagen` then `scangen`.
 
 ### scangen — concrete row scanners
 
-For each struct annotated `//+sql:scan`, `scangen` emits a `scan_<TypeName>`
-proc into `<pkg>/scan.gen.odin`, plus a `scan` overload set that lists the
-generated procs first and the reflective `sql.scan_*` procs as fallbacks. A
+For each struct annotated `//+sql:scan`, `scangen` emits `scan_<TypeName>`
+(^Rows) and `scan_<TypeName>_row` (^Row, for `query_row`) procs into
+`<pkg>/scan.gen.odin`, plus a `scan` overload set covering the generated procs,
+the positional `sql.scan_values` / `sql.row_scan_values`, and per-package guard
+overloads that make an *unannotated* struct destination a compile-time error
+("annotate it or call sql.scan_struct"). The reflective `sql.scan_struct` /
+`sql.row_scan_struct` are intentionally excluded from the set (see "Struct
+scanning" above) — unannotated structs are an explicit choice, not a silent
+fallback. The guards' where clauses exclude the package's annotated types so
+the concrete scanners win resolution without the guard being type-checked
+(whose `#assert` would fire even for the losing candidate). A
 `Maybe(T)` field is unwrapped to `T` for the generated assignment, which
 converts implicitly back into the optional — so the same emitted code handles
 plain and nullable fields, and a SQL `NULL` leaves the field `None`.

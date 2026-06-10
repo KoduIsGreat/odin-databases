@@ -136,7 +136,7 @@ main :: proc() {
 
 		for sql.next(&rows) {
 			n: NameOnly
-			scan(&rows, &n)
+			sql.scan_struct(&rows, &n) // unannotated struct — explicit reflection
 			fmt.printfln("  name=%v", n.name)
 		}
 		if rerr := sql.rows_err(&rows); rerr != nil {
@@ -274,7 +274,7 @@ main :: proc() {
 		}
 		if sql.next(&rows) {
 			c: Count
-			scan(&rows, &c)
+			sql.scan_struct(&rows, &c) // unannotated struct — explicit reflection
 			fmt.printfln("  total users: %v", c.total)
 		}
 	}

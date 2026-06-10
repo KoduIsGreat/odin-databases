@@ -110,7 +110,7 @@ main :: proc() {
 
 	for sql.next(&rows) {
 		u: User
-		sql.scan(&rows, &u) // matches columns to fields by name
+		sql.scan_struct(&rows, &u) // reflective: matches columns to fields by name
 		fmt.printfln("%v is %v", u.name, u.age)
 	}
 	// next() returns false for BOTH a clean end-of-rows and a mid-stream
@@ -120,8 +120,10 @@ main :: proc() {
 }
 ```
 
-`scan` also takes pointers for positional scanning (`sql.scan(&rows, &name,
-&age)`), and `sql.query_row(db, ...)` is a single-row convenience. Transactions
+`sql.scan(&rows, &name, &age)` scans positionally; struct mapping is explicit
+(`sql.scan_struct` / `sql.row_scan_struct`, or a scangen-generated concrete
+scanner — see codegen below). `sql.query_row(db, ...)` is a single-row
+convenience. Transactions
 (`sql.begin`/`commit`/`rollback`) and prepared statements (`sql.prepare` +
 `sql.stmt_exec`) are in the [`quickstart`](examples/quickstart) example.
 
@@ -167,8 +169,9 @@ User :: struct {
 just gen          # scangen + schemagen on the repo root (or `just gen <dir>`)
 ```
 
-- **scangen** emits `scan.gen.odin` with concrete `scan_<T>` procs (and a `scan`
-  overload set that falls back to the reflective scanner).
+- **scangen** emits `scan.gen.odin` with concrete `scan_<T>` / `scan_<T>_row`
+  procs and a `scan` overload set covering them plus positional scanning
+  (reflection stays an explicit opt-in via `sql.scan_struct`).
 - **schemagen** emits `schema.gen.odin` with typed `Column(T)` descriptors. Its
   **DB mode** introspects a live database instead of structs, emitting the row
   structs too — nullable columns become `Maybe(T)`:

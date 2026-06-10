@@ -22,8 +22,10 @@ import "core:time"
 //   rows := sql.query(db, "SELECT ...", args)
 //   defer sql.close_rows(&rows)
 //   for sql.next(&rows) {
-//       user: User
-//       sql.scan(&rows, &user)
+//       name: string; age: int
+//       sql.scan(&rows, &name, &age)         // positional
+//       // or: sql.scan_struct(&rows, &user) // reflective, explicit
+//       // or: scan(&rows, &user)            // scangen-generated, concrete
 //   }
 //   if err := sql.rows_err(&rows); err != nil { /* result truncated mid-stream */ }
 Rows :: struct {

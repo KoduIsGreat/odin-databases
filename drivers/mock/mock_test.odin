@@ -40,7 +40,7 @@ test_query_with_canned_rows :: proc(t: ^testing.T) {
 
 	for sql.next(&rows) {
 		u: User
-		serr := sql.scan(&rows, &u)
+		serr := sql.scan_struct(&rows, &u)
 		testing.expect_value(t, serr, nil)
 		append(&got, u)
 	}
@@ -86,7 +86,7 @@ test_returns_structs :: proc(t: ^testing.T) {
 	}
 	for sql.next(&rows) {
 		a: Account
-		testing.expect_value(t, sql.scan(&rows, &a), nil)
+		testing.expect_value(t, sql.scan_struct(&rows, &a), nil)
 		append(&got, a)
 	}
 
@@ -118,7 +118,7 @@ test_fixtures_are_deep_cloned :: proc(t: ^testing.T) {
 
 	testing.expect(t, sql.next(&rows), "expected a row")
 	u: User
-	testing.expect_value(t, sql.scan(&rows, &u), nil)
+	testing.expect_value(t, sql.scan_struct(&rows, &u), nil)
 	defer delete(u.name)
 	testing.expect_value(t, u.name, "Alice")
 }

@@ -85,7 +85,7 @@ test_connect_and_roundtrip :: proc(t: ^testing.T) {
 	defer for r in got {delete(r.label)} 	// scan clones strings into context.allocator
 	for sql.next(&rows) {
 		r: Row
-		serr := sql.scan(&rows, &r)
+		serr := sql.scan_struct(&rows, &r)
 		testing.expect_value(t, serr, nil)
 		append(&got, r)
 	}
@@ -128,7 +128,7 @@ test_params_and_null :: proc(t: ^testing.T) {
 		testing.expect_value(t, qerr, nil)
 		defer sql.rows_close(&rows)
 		o: Opt
-		if sql.next(&rows) {testing.expect_value(t, sql.scan(&rows, &o), nil)}
+		if sql.next(&rows) {testing.expect_value(t, sql.scan_struct(&rows, &o), nil)}
 		_, present := o.v.?
 		testing.expect(t, !present, "expected NULL to scan as None")
 	}

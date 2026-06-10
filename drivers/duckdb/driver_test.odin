@@ -166,17 +166,16 @@ test_timestamp_roundtrip :: proc(t: ^testing.T) {
 	_, e := sql.exec(db, "INSERT INTO ts VALUES (?)", want)
 	testing.expect_value(t, e, nil)
 
-	// Scan into a struct so the column maps to the `at` field by name. (Scanning
-	// a lone `time.Time` would hit scan's reflective struct path, since a
-	// time.Time is itself a struct — that's a property of the sql layer, not the
-	// driver.)
+	// Scan into a struct so the column maps to the `at` field by name, via the
+	// explicit reflective row_scan_struct (struct mapping is intentionally not
+	// part of the scan() overload set).
 	Row_TS :: struct {
 		at: time.Time,
 	}
 	row := sql.query_row(db, "SELECT at FROM ts")
 	defer sql.close_row(&row)
 	got: Row_TS
-	testing.expect_value(t, sql.scan(&row, &got), nil)
+	testing.expect_value(t, sql.row_scan_struct(&row, &got), nil)
 	// DuckDB TIMESTAMP has microsecond resolution; compare at that granularity.
 	testing.expect_value(t, got.at._nsec / 1000, want._nsec / 1000)
 }
@@ -303,7 +302,7 @@ test_timestamp_scales :: proc(t: ^testing.T) {
 	)
 	defer sql.close_row(&row)
 	got: Row
-	testing.expect_value(t, sql.scan(&row, &got), nil)
+	testing.expect_value(t, sql.row_scan_struct(&row, &got), nil)
 	want := i64(1_700_000_000) * i64(1e9) // 2023-11-14 22:13:20 UTC
 	testing.expect_value(t, got.s._nsec, want)
 	testing.expect_value(t, got.ms._nsec, want)
@@ -324,7 +323,7 @@ test_time_tz :: proc(t: ^testing.T) {
 	row := sql.query_row(db, "SELECT '12:30:00+02'::TIMETZ AS t")
 	defer sql.close_row(&row)
 	got: Row
-	testing.expect_value(t, sql.scan(&row, &got), nil)
+	testing.expect_value(t, sql.row_scan_struct(&row, &got), nil)
 	testing.expect_value(t, got.t._nsec, i64(10 * 3600 + 30 * 60) * i64(1e9))
 }
 
@@ -419,7 +418,7 @@ test_interval :: proc(t: ^testing.T) {
 	)
 	defer sql.close_row(&row)
 	got: Row
-	testing.expect_value(t, sql.scan(&row, &got), nil)
+	testing.expect_value(t, sql.row_scan_struct(&row, &got), nil)
 	testing.expect_value(t, got.iv.months, 14)
 	testing.expect_value(t, got.iv.days, 3)
 	testing.expect_value(t, got.iv.micros, i64(3600) * 1_000_000)
@@ -482,7 +481,7 @@ test_struct_scan :: proc(t: ^testing.T) {
 	row := sql.query_row(db, "SELECT {'x': 3, 'y': 7} AS p")
 	defer sql.close_row(&row)
 	got: Row
-	testing.expect_value(t, sql.scan(&row, &got), nil)
+	testing.expect_value(t, sql.row_scan_struct(&row, &got), nil)
 	testing.expect_value(t, got.p.x, 3)
 	testing.expect_value(t, got.p.y, 7)
 }
@@ -557,7 +556,7 @@ test_map_into_map :: proc(t: ^testing.T) {
 	row := sql.query_row(db, "SELECT MAP {'a': 1, 'b': 2, 'c': 3} AS m")
 	defer sql.close_row(&row)
 	got: Row
-	testing.expect_value(t, sql.scan(&row, &got), nil)
+	testing.expect_value(t, sql.row_scan_struct(&row, &got), nil)
 	defer {
 		for k in got.m {delete(k)}
 		delete(got.m)
@@ -685,7 +684,7 @@ test_union :: proc(t: ^testing.T) {
 	seen := 0
 	for sql.next(&rows) {
 		r: Row
-		testing.expect_value(t, sql.scan(&rows, &r), nil)
+		testing.expect_value(t, sql.scan_struct(&rows, &r), nil)
 		if n, ok := r.u.num.?; ok {
 			testing.expect_value(t, n, 42)
 			_, has_txt := r.u.txt.?

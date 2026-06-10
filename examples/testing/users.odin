@@ -28,7 +28,7 @@ find_users_over :: proc(db: ^sql.DB, min_age: i64) -> ([dynamic]User, sql.Error)
 
 	for sql.next(&rows) {
 		u: User
-		if serr := sql.scan(&rows, &u); serr != nil {
+		if serr := sql.scan_struct(&rows, &u); serr != nil {
 			return out, serr
 		}
 		append(&out, u)
