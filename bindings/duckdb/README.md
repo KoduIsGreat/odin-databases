@@ -15,8 +15,8 @@ bindings/duckdb/
   imports.odin          cross-platform foreign import block (appended into the generated pkg)
   input/duckdb.h        the upstream C header fed into obg (pinned; source of truth)
   duckdb/duckdb.odin    GENERATED — Odin bindings (package duckdb_c)
-  lib/<os>_<arch>/      prebuilt shared library (NOT checked in — see below)
-  fetch_libs.sh         download the prebuilt library for the current host
+  lib/<os>_<arch>/      prebuilt static archives (NOT checked in — see below)
+  fetch_libs.sh         download the prebuilt archives for the current host
   example/main.odin     minimal smoke test
 ```
 
@@ -61,38 +61,37 @@ import block ships inside the generated package.
 ## Getting the library
 
 Unlike the SQLite bindings (which build a small static lib from source), DuckDB
-ships large official prebuilt libraries per platform, so we **download** rather
-than build, and we **do not check the library into git** (~50MB):
+is a large C++ build, so we **download** pre-compiled archives rather than
+build, and we **do not check them into git** (~100MB):
 
 ```sh
 bash bindings/duckdb/fetch_libs.sh        # or: just duckdb-lib
 ```
 
-This drops the shared library into `lib/<os>_<arch>/`:
+The archives come from
+[`duckdb-go-bindings`](https://github.com/duckdb/duckdb-go-bindings) — the
+DuckDB org's repo of pre-compiled static libraries (built in their CI from the
+full source tree; the same set go-duckdb links by default). Each platform dir
+gets `libduckdb_static.a` plus the third-party and statically-bundled-extension
+archives (parquet, json, icu, core_functions, …), all listed in the foreign
+import block in `imports.odin` alongside the C++ runtime (`system:c++` on
+macOS; `system:stdc++` + `system:m` + `system:dl` on Linux).
 
-| Host                  | Asset                          | File              |
-| --------------------- | ------------------------------ | ----------------- |
-| Linux amd64           | `libduckdb-linux-amd64.zip`    | `libduckdb.so`    |
-| Linux arm64           | `libduckdb-linux-aarch64.zip`  | `libduckdb.so`    |
-| macOS (arm64 / amd64) | `libduckdb-osx-universal.zip`  | `libduckdb.dylib` |
-| Windows amd64         | `libduckdb-windows-amd64.zip`  | `duckdb.lib`      |
+Pin a different `duckdb-go-bindings` tag with `just duckdb-lib v0.10503.0`,
+`DUCKDB_BINDINGS_VERSION=...`, or by editing the default in `fetch_libs.sh` —
+tags map to DuckDB versions (v0.10503.0 = DuckDB v1.5.3; see their README).
 
-Pin a different release with `just duckdb-lib v1.1.3`, `DUCKDB_VERSION=v1.1.3`,
-or by editing the default in `fetch_libs.sh`. (Windows is mapped in `imports.odin`
-but not automated by the script — unzip the asset into `lib/windows_amd64/`.)
+**Windows** keeps linking the official **shared** `duckdb.lib`/`duckdb.dll`:
+the upstream static archives are MinGW-format, which Odin's MSVC linker can't
+consume. Unzip `libduckdb-windows-amd64.zip` from a
+[DuckDB release](https://github.com/duckdb/duckdb/releases) into
+`lib/windows_amd64/` and ship `duckdb.dll` next to your binary.
 
 ## Runtime linking
 
-The bindings link the **shared** library, so the dynamic loader must find it at
-run time. The `just` duckdb recipes set `LD_LIBRARY_PATH` (Linux) /
-`DYLD_LIBRARY_PATH` (macOS) to the lib dir for you; if you run a binary by hand,
-set it yourself:
-
-```sh
-LD_LIBRARY_PATH=bindings/duckdb/lib/linux_amd64 ./your-binary
-```
-
-`odin check` does not link, so type-checking works without the library present.
+macOS and Linux binaries are statically linked and self-contained — nothing to
+set at run time. `odin check` does not link, so type-checking works without
+the archives present.
 
 ## Using
 
@@ -119,9 +118,10 @@ Most users want the higher-level driver instead — see
 
 ## Updating DuckDB
 
-1. Download a new C API zip from the
-   [DuckDB releases](https://github.com/duckdb/duckdb/releases) (it contains
-   `duckdb.h`).
-2. Replace `input/duckdb.h`, and bump the pinned version in `fetch_libs.sh`.
+1. Pick a new [`duckdb-go-bindings` tag](https://github.com/duckdb/duckdb-go-bindings/tags)
+   and bump the pinned default in `fetch_libs.sh`.
+2. Replace `input/duckdb.h` with the `duckdb.h` from the same tag (it sits next
+   to the archives, e.g. `lib/darwin-arm64/duckdb.h`) so header and library
+   can't drift.
 3. Re-run `just gen-duckdb-bindings`.
-4. Re-fetch the matching shared library with `just duckdb-lib`.
+4. Re-fetch the matching archives with `just duckdb-lib`.

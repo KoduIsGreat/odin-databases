@@ -32,3 +32,13 @@ remove_macro_prefix    = "DUCKDB_"
 // like a bare `type`/`time`. Functions and enum members keep their familiar
 // DuckDB spellings.
 force_ada_case_types = true
+
+// duckdb.h (1.5+) forward-declares the Arrow C Data Interface structs
+// (ArrowSchema/ArrowArray — external spec objects, not DuckDB's) alongside its
+// own deprecated duckdb_arrow_schema/duckdb_arrow_array typedefs; after prefix
+// stripping both would land on Arrow_Schema/Arrow_Array. Keep the spec structs
+// under their spec names so the DuckDB typedefs keep the unsurprising ones.
+rename = {
+	"ArrowSchema" = "ArrowSchema"
+	"ArrowArray" = "ArrowArray"
+}

@@ -161,7 +161,7 @@ test_timestamp_roundtrip :: proc(t: ^testing.T) {
 	db := open_mem(t)
 	defer sql.close(db)
 
-	sql.exec(db, "CREATE TABLE ts (at TIMESTAMP)")
+	sql.exec(db, "CREATE TABLE ts (\"at\" TIMESTAMP)")
 	want := time.Time{_nsec = 1_700_000_000 * i64(1e9)}
 	_, e := sql.exec(db, "INSERT INTO ts VALUES (?)", want)
 	testing.expect_value(t, e, nil)
@@ -172,7 +172,7 @@ test_timestamp_roundtrip :: proc(t: ^testing.T) {
 	Row_TS :: struct {
 		at: time.Time,
 	}
-	row := sql.query_row(db, "SELECT at FROM ts")
+	row := sql.query_row(db, "SELECT \"at\" FROM ts")
 	defer sql.close_row(&row)
 	got: Row_TS
 	testing.expect_value(t, sql.row_scan_struct(&row, &got), nil)
@@ -325,6 +325,23 @@ test_time_tz :: proc(t: ^testing.T) {
 	got: Row
 	testing.expect_value(t, sql.row_scan_struct(&row, &got), nil)
 	testing.expect_value(t, got.t._nsec, i64(10 * 3600 + 30 * 60) * i64(1e9))
+}
+
+// TIME_NS (DuckDB 1.4+) is nanoseconds since midnight; it must scan into
+// time.Time with no sub-microsecond precision loss.
+@(test)
+test_time_ns :: proc(t: ^testing.T) {
+	db := open_mem(t)
+	defer sql.close(db)
+
+	Row :: struct {
+		t: time.Time,
+	}
+	row := sql.query_row(db, "SELECT '12:30:00.123456789'::TIME_NS AS t")
+	defer sql.close_row(&row)
+	got: Row
+	testing.expect_value(t, sql.row_scan_struct(&row, &got), nil)
+	testing.expect_value(t, got.t._nsec, i64(12 * 3600 + 30 * 60) * i64(1e9) + 123456789)
 }
 
 // More rows than DuckDB's vector size (2048) forces multiple chunks, exercising

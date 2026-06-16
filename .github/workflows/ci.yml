@@ -30,9 +30,10 @@ jobs:
       - name: Build SQLite static lib
         run: bash bindings/sqlite/build_libs.sh
 
-      # The DuckDB shared lib is large and not checked in; fetch the official
-      # prebuilt one so the DuckDB driver suite links during `just test`.
-      - name: Fetch DuckDB shared lib
+      # The DuckDB static archives are large and not checked in; fetch the
+      # pre-compiled set (from duckdb/duckdb-go-bindings) so the DuckDB driver
+      # suite links during `just test`.
+      - name: Fetch DuckDB static libs
         run: bash bindings/duckdb/fetch_libs.sh
 
       # Regenerate from source and fail if the committed *.gen.odin files are

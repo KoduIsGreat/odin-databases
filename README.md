@@ -5,8 +5,9 @@
 A database access toolkit for [Odin](https://odin-lang.org):
 
 - **`database:sql`** — a driver-agnostic core (`DB`, `Conn`, `Rows`, `Row`,
-  `Stmt`, `Tx`) with a connection pool, transactions, prepared statements, and
-  reflective/positional row scanning.
+  `Stmt`, `Tx`) with a connection pool, transactions, prepared statements,
+  reflective/positional row scanning, and errors that carry the offending
+  query and call site.
 - **`database:sqlbuilder`** — a typed SQL builder where column references and
   predicate values are checked at **compile time**, plus a raw string escape
   hatch.
@@ -35,17 +36,22 @@ See [`DESIGN.md`](DESIGN.md) for the rationale behind each piece and
 `sqlite3` (the CLI) is only needed if you use schemagen's database-introspection
 mode.
 
-- For the DuckDB driver: a prebuilt `libduckdb` shared library for your platform
-  under `bindings/duckdb/lib/<os>_<arch>/`. It is not checked in (~50MB); fetch
-  the official prebuilt one with:
+- For the DuckDB driver: the prebuilt DuckDB **static** archives for your
+  platform under `bindings/duckdb/lib/<os>_<arch>/`. They are not checked in
+  (~100MB); fetch them with:
 
   ```sh
   bash bindings/duckdb/fetch_libs.sh      # or: just duckdb-lib
   ```
 
-  The library is linked dynamically, so it must be on the loader path at run
-  time — the `just` recipes set `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` for you.
-  See [`drivers/duckdb`](drivers/duckdb) for the driver's scope and caveats.
+  The archives come from
+  [`duckdb-go-bindings`](https://github.com/duckdb/duckdb-go-bindings) (the
+  DuckDB org's pre-compiled static libs, the same set go-duckdb links). DuckDB
+  is linked **statically** on macOS and Linux, so binaries are self-contained —
+  no loader path at run time — at the cost of ~50MB of binary size. Windows
+  still links the shared `duckdb.lib`/`duckdb.dll` (the upstream static
+  archives are MinGW-format, which MSVC can't consume). See
+  [`drivers/duckdb`](drivers/duckdb) for the driver's scope and caveats.
 
   The Odin bindings are pre-generated and committed, so setup is just "fetch the
   library" — you do **not** need to run `just gen-duckdb-bindings`. Only
@@ -122,10 +128,36 @@ main :: proc() {
 
 `sql.scan(&rows, &name, &age)` scans positionally; struct mapping is explicit
 (`sql.scan_struct` / `sql.row_scan_struct`, or a scangen-generated concrete
-scanner — see codegen below). `sql.query_row(db, ...)` is a single-row
-convenience. Transactions
+scanner — see codegen below). Passing a lone struct pointer to `sql.scan` is a
+**compile-time error** that names the type and the alternatives, not a runtime
+mismatch. `sql.query_row(db, ...)` is a single-row convenience. Transactions
 (`sql.begin`/`commit`/`rollback`) and prepared statements (`sql.prepare` +
 `sql.stmt_exec`) are in the [`quickstart`](examples/quickstart) example.
+
+## Error handling
+
+`sql.Error` is a union of plain Odin values (`Driver_Error | Pool_Error |
+Arg_Error | Scan_Error`) — switch on the variant for programmatic handling.
+Every error returned by the sql layer is annotated with the SQL text that
+caused it and the application call site that issued it (captured via
+`#caller_location`, zero effort at the call site), so a failure deep in a call
+stack still names its query:
+
+```odin
+if _, err := sql.exec(db, "UPDATE users SET nmae = ? WHERE id = ?", name, id); err != nil {
+	fmt.println(sql.err_to_string(err))
+	// sql driver error code 1: Binder Error: column "nmae" does not exist
+	//   query: UPDATE users SET nmae = ? WHERE id = ?
+	//   at:    src/store/users.odin(42:15) in update_user
+}
+```
+
+The context follows deferred failures too: a prepared statement that fails at
+`stmt_exec`, a mid-stream `rows_err`, or a `scan` mismatch all report the
+originating query. `sql.error_query(err)` / `sql.error_ctx(err)` read the
+attached context without a switch. The query string is borrowed, not cloned —
+free for the string literals that queries almost always are. See
+[`err_handling`](examples/err_handling).
 
 ## Typed query builder
 
@@ -170,8 +202,9 @@ just gen          # scangen + schemagen on the repo root (or `just gen <dir>`)
 ```
 
 - **scangen** emits `scan.gen.odin` with concrete `scan_<T>` / `scan_<T>_row`
-  procs and a `scan` overload set covering them plus positional scanning
-  (reflection stays an explicit opt-in via `sql.scan_struct`).
+  procs and a `scan` overload set covering them plus positional scanning.
+  Scanning an *unannotated* struct through the set is a compile-time error —
+  annotate it, or opt into reflection explicitly via `sql.scan_struct`.
 - **schemagen** emits `schema.gen.odin` with typed `Column(T)` descriptors. Its
   **DB mode** introspects a live database instead of structs, emitting the row
   structs too — nullable columns become `Maybe(T)`:
@@ -188,10 +221,11 @@ just gen          # scangen + schemagen on the repo root (or `just gen <dir>`)
   ```
 
   A DuckDB database can be introspected with `-driver=duckdb`. It links
-  `libduckdb`, so it's opt-in at build time (`-define:SCHEMAGEN_DUCKDB=true`) to
-  keep the default `schemagen`/`odb` free of that dependency — the `just` recipe
-  sets the flag and loader path for you. Composite columns (LIST/STRUCT/MAP/…)
-  have no single-field mapping and are skipped with a warning:
+  DuckDB (statically, ~50MB), so it's opt-in at build time
+  (`-define:SCHEMAGEN_DUCKDB=true`) to keep the default `schemagen`/`odb` free
+  of that dependency — the `just` recipe sets the flag for you. Composite
+  columns (LIST/STRUCT/MAP/…) have no single-field mapping and are skipped
+  with a warning:
 
   ```sh
   just duckdb-lib                          # once, to fetch libduckdb

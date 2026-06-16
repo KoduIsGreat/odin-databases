@@ -21,14 +21,9 @@ install_dir := env_var_or_default("ODB_INSTALL_DIR", env_var("HOME") / ".local" 
 openssl_lib_dir := env_var_or_default("OPENSSL_LIB_DIR", if os() == "macos" { "/opt/homebrew/opt/openssl@3/lib" } else { "" })
 pg_tls_flags := "-define:DATABASE_PG_TLS=true" + if openssl_lib_dir != "" { " -extra-linker-flags:-L" + openssl_lib_dir } else { "" }
 
-# The DuckDB driver links a prebuilt shared library (fetched with `just
-# duckdb-lib`). It is not checked in, and the dynamic loader must find it at run
-# time — so build/test/run recipes prefix the command with the right *_LIBRARY_PATH
-# pointing at bindings/duckdb/lib/<os>_<arch>/.
-duck_os  := if os() == "macos" { "darwin" } else { os() }
-duck_arch := if arch() == "x86_64" { "amd64" } else if arch() == "aarch64" { "arm64" } else if arch() == "arm64" { "arm64" } else { arch() }
-duck_lib_dir := justfile_directory() / "bindings" / "duckdb" / "lib" / (duck_os + "_" + duck_arch)
-duck_ld := if os() == "macos" { "DYLD_LIBRARY_PATH=" + duck_lib_dir } else { "LD_LIBRARY_PATH=" + duck_lib_dir }
+# The DuckDB driver links prebuilt STATIC archives (fetched with `just
+# duckdb-lib` into bindings/duckdb/lib/<os>_<arch>/; not checked in). Binaries
+# are self-contained — no loader path needed at run time.
 
 # Default: list available recipes.
 default:
@@ -85,7 +80,7 @@ test:
     odin test drivers/mock {{coll}}
     odin test drivers/sqlite {{coll}}
     odin test drivers/postgres {{coll}}
-    {{duck_ld}} odin test drivers/duckdb {{coll}}
+    odin test drivers/duckdb {{coll}}
     odin test sqlbuilder {{coll}}
     odin test migrate {{coll}}
     odin test tools/migragen {{coll}}
@@ -127,16 +122,13 @@ postgres-docker-stop:
 
 # --- Examples -----------------------------------------------------------------
 
-# Run an example by name, e.g. `just run-example quickstart`. Sets the DuckDB
-# loader path so DuckDB-linked examples (e.g. duckdb, err_handling) find
-# libduckdb at run time; harmless for examples that don't link it.
+# Run an example by name, e.g. `just run-example quickstart`.
 run-example name:
-    {{duck_ld}} odin run examples/{{name}} {{coll}}
+    odin run examples/{{name}} {{coll}}
 
-# Run an example's tests by name, e.g. `just test-example testing`. Sets the
-# DuckDB loader path for the same reason as run-example.
+# Run an example's tests by name, e.g. `just test-example testing`.
 test-example name:
-    {{duck_ld}} odin test examples/{{name}} {{coll}}
+    odin test examples/{{name}} {{coll}}
 
 # Smoke-test the generated `ss` postgres schema with a typed query-builder
 # SELECT. Reads connection settings from examples/ss/.env (copy the .env.example
@@ -215,12 +207,12 @@ schema-db-postgres-tls dsn dir:
 # Run schemagen's DuckDB DB front-end: introspect <db> (a DuckDB file, via
 # information_schema) and write row structs + typed descriptors. DuckDB
 # introspection is opt-in (links libduckdb), so this builds with
-# -define:SCHEMAGEN_DUCKDB=true and sets the loader path. Run `just duckdb-lib`
-# first if the library isn't present. Composite columns (LIST/STRUCT/...) are
+# -define:SCHEMAGEN_DUCKDB=true. Run `just duckdb-lib` first if the static
+# archives aren't present. Composite columns (LIST/STRUCT/...) are
 # skipped with a warning.
 #   just schema-db-duckdb app.duckdb ./myapp
 schema-db-duckdb db dir:
-    {{duck_ld}} odin run tools/schemagen {{coll}} -define:SCHEMAGEN_DUCKDB=true -- -driver=duckdb -db={{db}} {{dir}}
+    odin run tools/schemagen {{coll}} -define:SCHEMAGEN_DUCKDB=true -- -driver=duckdb -db={{db}} {{dir}}
 
 # Scaffold a new, empty migration pair (<version>_<name>.up.sql / .down.sql)
 # into <dir>, using a fresh YYYYMMDDHHMMSS timestamp.
@@ -275,9 +267,10 @@ bindings-example:
 
 # --- DuckDB bindings + driver -------------------------------------------------
 
-# Fetch the prebuilt DuckDB shared library for this host into
-# bindings/duckdb/lib/<os>_<arch>/ (not checked in; ~50MB). Pin a release with
-# `just duckdb-lib v1.1.3`.
+# Fetch the prebuilt DuckDB static archives for this host into
+# bindings/duckdb/lib/<os>_<arch>/ (not checked in; ~100MB). They come from
+# github.com/duckdb/duckdb-go-bindings — pin one of its tags with e.g.
+# `just duckdb-lib v0.10503.0` (= DuckDB v1.5.3; see their README mapping).
 duckdb-lib version="":
     bash bindings/duckdb/fetch_libs.sh {{version}}
 
@@ -290,28 +283,26 @@ duckdb-lib version="":
 gen-duckdb-bindings:
     bash bindings/duckdb/gen_bindings.sh
 
-# Run the DuckDB driver's test suite (links + loads the prebuilt shared lib).
-# Run `just duckdb-lib` first if the library isn't present.
+# Run the DuckDB driver's test suite (links the prebuilt static archives).
+# Run `just duckdb-lib` first if they aren't present.
 test-duckdb:
-    {{duck_ld}} odin test drivers/duckdb {{coll}}
+    odin test drivers/duckdb {{coll}}
 
-# Run the raw DuckDB bindings smoke test (verifies the shared lib + bindings link).
+# Run the raw DuckDB bindings smoke test (verifies the static archives + bindings link).
 duckdb-bindings-example:
-    cd bindings/duckdb/example && {{duck_ld}} odin run .
+    cd bindings/duckdb/example && odin run .
 
-# Run the DuckDB driver example (loads the prebuilt shared lib). The generic
-# `run-example` recipe can't set the loader path, so DuckDB gets its own.
+# Run the DuckDB driver example.
 #   just duckdb-lib && just run-duckdb-example
 run-duckdb-example:
     mkdir -p bin
-    {{duck_ld}} odin run examples/duckdb {{coll}} -out:bin/duckdb-example
+    odin run examples/duckdb {{coll}} -out:bin/duckdb-example
 
-#Run the DuckDB introspection example (loads the prebuilt shared lib). The generic
-# `run-example` recipe can't set the loader path, so DuckDB gets its own.
+# Run the DuckDB introspection example.
 #   just duckdb-lib && just run-duckdb-introspection-example
 run-duckdb-introspection-example:
     mkdir -p bin
-    {{duck_ld}} odin run examples/duckdb-introspection {{coll}} -out:bin/duckdb-introspection-example
+    odin run examples/duckdb-introspection {{coll}} -out:bin/duckdb-introspection-example
 
 # --- Maintenance --------------------------------------------------------------
 

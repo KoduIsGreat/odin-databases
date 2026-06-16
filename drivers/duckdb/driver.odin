@@ -20,7 +20,8 @@
 //   - Composite/exotic types read but cannot be bound as query parameters: pass
 //     a string/literal and CAST. (LIST/ARRAY/STRUCT/MAP/UNION scan structurally
 //     into []T / [N]T / structs / []struct{key,value}; ENUM/UUID/INTERVAL/BIT/
-//     VARINT have native mappings.)
+//     VARINT(BIGNUM)/TIME_NS have native mappings. GEOMETRY/VARIANT read as
+//     unsupported cells.)
 //   - last_insert_id is always 0 (DuckDB has no rowid/last-insert concept).
 //   - Isolation levels are ignored: BEGIN starts DuckDB's snapshot-isolated tx.
 //
@@ -365,6 +366,7 @@ type_id_for :: proc(t: ddb.Type) -> typeid {
 	     .TIMESTAMP_TZ,
 	     .DATE,
 	     .TIME,
+	     .TIME_NS,
 	     .TIME_TZ:
 		return typeid_of(time.Time)
 	case .VARCHAR:
@@ -625,14 +627,15 @@ read_cell :: proc(rows: ^Duck_Rows, col: int, row: u64, dest: ^drv.Value) {
 	case .BIT:
 		dest^ = decode_bit(rows.vdata[col], row, mem.dynamic_arena_allocator(&rows.tree_arena))
 		return
-	case .VARINT:
+	case .BIGNUM:
 		dest^ = decode_varint(rows.vdata[col], row, mem.dynamic_arena_allocator(&rows.tree_arena))
 		return
 	}
 	read_vector_cell(rows.vdata[col], m, row, dest)
 }
 
-// decode_varint renders DuckDB's arbitrary-precision VARINT as an exact decimal
+// decode_varint renders DuckDB's arbitrary-precision VARINT (C enum: BIGNUM
+// since DuckDB 1.4) as an exact decimal
 // string. In-memory it is a 3-byte big-endian header (bit 7 of byte 0 is the
 // sign: 1 = positive; the low 23 bits are the magnitude byte count) followed by
 // the big-endian magnitude. Negatives store every byte bitwise-complemented (so
@@ -795,6 +798,11 @@ read_vector_cell :: proc(data: rawptr, m: Col_Meta, row: u64, dest: ^drv.Value) 
 		dest^ = time.Time {
 			_nsec = ([^]i64)(data)[row] * 1000,
 		}
+	case .TIME_NS:
+		// nanos since midnight (DuckDB 1.4+).
+		dest^ = time.Time {
+			_nsec = ([^]i64)(data)[row],
+		}
 	case .TIME_TZ:
 		// Packed 40-bit micros + 24-bit offset; normalize to the UTC instant.
 		s := ddb.from_time_tz(([^]ddb.Time_Tz)(data)[row])
@@ -804,7 +812,8 @@ read_vector_cell :: proc(data: rawptr, m: Col_Meta, row: u64, dest: ^drv.Value) 
 		dest^ = time.Time {
 			_nsec = (day_us - i64(s.offset) * 1_000_000) * 1000,
 		}
-	case .INVALID, .LIST, .STRUCT, .MAP, .ARRAY, .UNION, .BIT, .ANY, .VARINT, .SQLNULL:
+	case .INVALID, .LIST, .STRUCT, .MAP, .ARRAY, .UNION, .BIT, .ANY, .BIGNUM, .SQLNULL,
+	     .STRING_LITERAL, .INTEGER_LITERAL, .GEOMETRY, .VARIANT:
 		dest^ = unsupported_cell(m.type)
 	case:
 		dest^ = unsupported_cell(m.type)
@@ -917,7 +926,7 @@ build_node :: proc(vec: ddb.Vector, lt: ddb.Logical_Type, row: u64, a: mem.Alloc
 		return Node{kind = .Scalar, scalar = s}
 	case .BIT:
 		return Node{kind = .Scalar, scalar = decode_bit(ddb.vector_get_data(vec), row, a)}
-	case .VARINT:
+	case .BIGNUM:
 		return Node{kind = .Scalar, scalar = decode_varint(ddb.vector_get_data(vec), row, a)}
 	case:
 		m := Col_Meta {
@@ -1314,8 +1323,13 @@ make_col_meta :: proc(lt: ddb.Logical_Type, t: ddb.Type, a: mem.Allocator) -> (m
 	     .TIME_TZ,
 	     .TIMESTAMP_TZ,
 	     .ANY,
-	     .VARINT,
-	     .SQLNULL:
+	     .BIGNUM,
+	     .SQLNULL,
+	     .STRING_LITERAL,
+	     .INTEGER_LITERAL,
+	     .TIME_NS,
+	     .GEOMETRY,
+	     .VARIANT:
 	// Scalar / self-describing: nothing extra to cache.
 	case .LIST, .STRUCT, .MAP, .ARRAY, .UNION:
 		// Composite: retain the logical type so the reader can walk child types.

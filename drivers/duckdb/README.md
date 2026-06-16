@@ -25,18 +25,17 @@ for sql.next(&rows) {
 
 ## Setup
 
-The driver links a prebuilt `libduckdb` shared library that is **not** checked
-into the repo (~50MB). Fetch the official one for your host first:
+The driver links DuckDB **statically** from pre-compiled archives that are
+**not** checked into the repo (~100MB). Fetch them for your host first:
 
 ```sh
 just duckdb-lib                 # or: bash bindings/duckdb/fetch_libs.sh
 ```
 
-Because the library is linked dynamically, the loader must find it at run time.
-The `just` recipes set `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` for you; running a
-binary by hand, set it yourself (see
-[`bindings/duckdb`](../../bindings/duckdb/README.md)). Run the test suite, or the
-runnable [`examples/duckdb`](../../examples/duckdb) demo, with:
+Binaries are self-contained (no loader path at run time, +~50MB binary size);
+see [`bindings/duckdb`](../../bindings/duckdb/README.md) for where the archives
+come from. Run the test suite, or the runnable
+[`examples/duckdb`](../../examples/duckdb) demo, with:
 
 ```sh
 just test-duckdb           # the driver's test suite

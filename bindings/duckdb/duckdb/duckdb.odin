@@ -17,19 +17,132 @@ import "core:c"
 // Cross-platform foreign import block, appended into the generated package by
 // odin-c-bindgen (configured via bindgen.sjson `imports_file`).
 //
-// Prebuilt DuckDB libraries live under ../lib/<os>_<arch>/. They are NOT checked
-// in (each is ~50MB); fetch one for your host with ../fetch_libs.sh (or
-// `just duckdb-lib`). We link the shared library, so the loader must be able to
-// find it at runtime — the `just` duckdb recipes set LD_LIBRARY_PATH /
-// DYLD_LIBRARY_PATH to the lib dir for you.
+// DuckDB is linked STATICALLY on macOS and Linux from the pre-compiled
+// archives in ../lib/<os>_<arch>/ — libduckdb_static.a plus the third-party
+// and bundled-extension archives, exactly the set go-duckdb links. They are
+// NOT checked in (~100MB per platform); fetch them for your host with
+// ../fetch_libs.sh (or `just duckdb-lib`), which pulls them from
+// github.com/duckdb/duckdb-go-bindings at the pinned tag. Static linking
+// makes binaries self-contained — no LD_LIBRARY_PATH / DYLD_LIBRARY_PATH at
+// run time, at the cost of ~50MB of binary size.
+//
+// DuckDB is C++, so the C++ runtime must be linked alongside the archives
+// (`system:c++` on macOS, `system:stdc++` + `system:m` + `system:dl` on
+// Linux) — the static archives do not carry it. The archive order mirrors
+// duckdb-go-bindings' LDFLAGS.
+//
+// Windows still links the official shared duckdb.lib/duckdb.dll: the static
+// archives upstream are MinGW-format, which the MSVC linker Odin uses cannot
+// consume. Fetch libduckdb-windows-amd64.zip from a DuckDB release into
+// ../lib/windows_amd64/ manually, and keep duckdb.dll next to your binary.
 when ODIN_OS == .Linux && ODIN_ARCH == .amd64 {
-	foreign import lib {"../lib/linux_amd64/libduckdb.so", "system:c"}
+	foreign import lib {
+		"../lib/linux_amd64/libduckdb_static.a",
+		"../lib/linux_amd64/libduckdb_generated_extension_loader.a",
+		"../lib/linux_amd64/libautocomplete_extension.a",
+		"../lib/linux_amd64/libcore_functions_extension.a",
+		"../lib/linux_amd64/libicu_extension.a",
+		"../lib/linux_amd64/libjson_extension.a",
+		"../lib/linux_amd64/libparquet_extension.a",
+		"../lib/linux_amd64/libtpcds_extension.a",
+		"../lib/linux_amd64/libtpch_extension.a",
+		"../lib/linux_amd64/libduckdb_fastpforlib.a",
+		"../lib/linux_amd64/libduckdb_fmt.a",
+		"../lib/linux_amd64/libduckdb_fsst.a",
+		"../lib/linux_amd64/libduckdb_hyperloglog.a",
+		"../lib/linux_amd64/libduckdb_mbedtls.a",
+		"../lib/linux_amd64/libduckdb_miniz.a",
+		"../lib/linux_amd64/libduckdb_pg_query.a",
+		"../lib/linux_amd64/libduckdb_re2.a",
+		"../lib/linux_amd64/libduckdb_skiplistlib.a",
+		"../lib/linux_amd64/libduckdb_utf8proc.a",
+		"../lib/linux_amd64/libduckdb_yyjson.a",
+		"../lib/linux_amd64/libduckdb_zstd.a",
+		"system:c",
+		"system:stdc++",
+		"system:m",
+		"system:dl",
+	}
 } else when ODIN_OS == .Linux && ODIN_ARCH == .arm64 {
-	foreign import lib {"../lib/linux_arm64/libduckdb.so", "system:c"}
+	foreign import lib {
+		"../lib/linux_arm64/libduckdb_static.a",
+		"../lib/linux_arm64/libduckdb_generated_extension_loader.a",
+		"../lib/linux_arm64/libautocomplete_extension.a",
+		"../lib/linux_arm64/libcore_functions_extension.a",
+		"../lib/linux_arm64/libicu_extension.a",
+		"../lib/linux_arm64/libjson_extension.a",
+		"../lib/linux_arm64/libparquet_extension.a",
+		"../lib/linux_arm64/libtpcds_extension.a",
+		"../lib/linux_arm64/libtpch_extension.a",
+		"../lib/linux_arm64/libduckdb_fastpforlib.a",
+		"../lib/linux_arm64/libduckdb_fmt.a",
+		"../lib/linux_arm64/libduckdb_fsst.a",
+		"../lib/linux_arm64/libduckdb_hyperloglog.a",
+		"../lib/linux_arm64/libduckdb_mbedtls.a",
+		"../lib/linux_arm64/libduckdb_miniz.a",
+		"../lib/linux_arm64/libduckdb_pg_query.a",
+		"../lib/linux_arm64/libduckdb_re2.a",
+		"../lib/linux_arm64/libduckdb_skiplistlib.a",
+		"../lib/linux_arm64/libduckdb_utf8proc.a",
+		"../lib/linux_arm64/libduckdb_yyjson.a",
+		"../lib/linux_arm64/libduckdb_zstd.a",
+		"system:c",
+		"system:stdc++",
+		"system:m",
+		"system:dl",
+	}
 } else when ODIN_OS == .Darwin && ODIN_ARCH == .arm64 {
-	foreign import lib {"../lib/darwin_arm64/libduckdb.dylib", "system:c"}
+	foreign import lib {
+		"../lib/darwin_arm64/libduckdb_static.a",
+		"../lib/darwin_arm64/libduckdb_generated_extension_loader.a",
+		"../lib/darwin_arm64/libautocomplete_extension.a",
+		"../lib/darwin_arm64/libcore_functions_extension.a",
+		"../lib/darwin_arm64/libicu_extension.a",
+		"../lib/darwin_arm64/libjson_extension.a",
+		"../lib/darwin_arm64/libparquet_extension.a",
+		"../lib/darwin_arm64/libtpcds_extension.a",
+		"../lib/darwin_arm64/libtpch_extension.a",
+		"../lib/darwin_arm64/libduckdb_fastpforlib.a",
+		"../lib/darwin_arm64/libduckdb_fmt.a",
+		"../lib/darwin_arm64/libduckdb_fsst.a",
+		"../lib/darwin_arm64/libduckdb_hyperloglog.a",
+		"../lib/darwin_arm64/libduckdb_mbedtls.a",
+		"../lib/darwin_arm64/libduckdb_miniz.a",
+		"../lib/darwin_arm64/libduckdb_pg_query.a",
+		"../lib/darwin_arm64/libduckdb_re2.a",
+		"../lib/darwin_arm64/libduckdb_skiplistlib.a",
+		"../lib/darwin_arm64/libduckdb_utf8proc.a",
+		"../lib/darwin_arm64/libduckdb_yyjson.a",
+		"../lib/darwin_arm64/libduckdb_zstd.a",
+		"system:c",
+		"system:c++",
+	}
 } else when ODIN_OS == .Darwin && ODIN_ARCH == .amd64 {
-	foreign import lib {"../lib/darwin_amd64/libduckdb.dylib", "system:c"}
+	foreign import lib {
+		"../lib/darwin_amd64/libduckdb_static.a",
+		"../lib/darwin_amd64/libduckdb_generated_extension_loader.a",
+		"../lib/darwin_amd64/libautocomplete_extension.a",
+		"../lib/darwin_amd64/libcore_functions_extension.a",
+		"../lib/darwin_amd64/libicu_extension.a",
+		"../lib/darwin_amd64/libjson_extension.a",
+		"../lib/darwin_amd64/libparquet_extension.a",
+		"../lib/darwin_amd64/libtpcds_extension.a",
+		"../lib/darwin_amd64/libtpch_extension.a",
+		"../lib/darwin_amd64/libduckdb_fastpforlib.a",
+		"../lib/darwin_amd64/libduckdb_fmt.a",
+		"../lib/darwin_amd64/libduckdb_fsst.a",
+		"../lib/darwin_amd64/libduckdb_hyperloglog.a",
+		"../lib/darwin_amd64/libduckdb_mbedtls.a",
+		"../lib/darwin_amd64/libduckdb_miniz.a",
+		"../lib/darwin_amd64/libduckdb_pg_query.a",
+		"../lib/darwin_amd64/libduckdb_re2.a",
+		"../lib/darwin_amd64/libduckdb_skiplistlib.a",
+		"../lib/darwin_amd64/libduckdb_utf8proc.a",
+		"../lib/darwin_amd64/libduckdb_yyjson.a",
+		"../lib/darwin_amd64/libduckdb_zstd.a",
+		"system:c",
+		"system:c++",
+	}
 } else when ODIN_OS == .Windows && ODIN_ARCH == .amd64 {
 	foreign import lib "../lib/windows_amd64/duckdb.lib"
 } else {
@@ -40,129 +153,134 @@ when ODIN_OS == .Linux && ODIN_ARCH == .amd64 {
 }
 
 
-//===--------------------------------------------------------------------===//
-// Enums
-//===--------------------------------------------------------------------===//
-// WARNING: the numbers of these enums should not be changed, as changing the numbers breaks ABI compatibility
-// Always add enums at the END of the enum
 //! An enum over DuckDB's internal types.
 Duckdb_Type :: enum u32 {
-	INVALID      = 0,
+	INVALID         = 0,
 
 	// bool
-	BOOLEAN      = 1,
+	BOOLEAN         = 1,
 
 	// int8_t
-	TINYINT      = 2,
+	TINYINT         = 2,
 
 	// int16_t
-	SMALLINT     = 3,
+	SMALLINT        = 3,
 
 	// int32_t
-	INTEGER      = 4,
+	INTEGER         = 4,
 
 	// int64_t
-	BIGINT       = 5,
+	BIGINT          = 5,
 
 	// uint8_t
-	UTINYINT     = 6,
+	UTINYINT        = 6,
 
 	// uint16_t
-	USMALLINT    = 7,
+	USMALLINT       = 7,
 
 	// uint32_t
-	UINTEGER     = 8,
+	UINTEGER        = 8,
 
 	// uint64_t
-	UBIGINT      = 9,
+	UBIGINT         = 9,
 
 	// float
-	FLOAT        = 10,
+	FLOAT           = 10,
 
 	// double
-	DOUBLE       = 11,
+	DOUBLE          = 11,
 
-	// duckdb_timestamp, in microseconds
-	TIMESTAMP    = 12,
+	// duckdb_timestamp (microseconds)
+	TIMESTAMP       = 12,
 
 	// duckdb_date
-	DATE         = 13,
+	DATE            = 13,
 
 	// duckdb_time
-	TIME         = 14,
+	TIME            = 14,
 
 	// duckdb_interval
-	INTERVAL     = 15,
+	INTERVAL        = 15,
 
 	// duckdb_hugeint
-	HUGEINT      = 16,
+	HUGEINT         = 16,
 
 	// duckdb_uhugeint
-	UHUGEINT     = 32,
+	UHUGEINT        = 32,
 
 	// const char*
-	VARCHAR      = 17,
+	VARCHAR         = 17,
 
 	// duckdb_blob
-	BLOB         = 18,
+	BLOB            = 18,
 
-	// decimal
-	DECIMAL      = 19,
+	// duckdb_decimal
+	DECIMAL         = 19,
 
-	// duckdb_timestamp, in seconds
-	TIMESTAMP_S  = 20,
+	// duckdb_timestamp_s (seconds)
+	TIMESTAMP_S     = 20,
 
-	// duckdb_timestamp, in milliseconds
-	TIMESTAMP_MS = 21,
+	// duckdb_timestamp_ms (milliseconds)
+	TIMESTAMP_MS    = 21,
 
-	// duckdb_timestamp, in nanoseconds
-	TIMESTAMP_NS = 22,
+	// duckdb_timestamp_ns (nanoseconds)
+	TIMESTAMP_NS    = 22,
 
 	// enum type, only useful as logical type
-	ENUM         = 23,
+	ENUM            = 23,
 
 	// list type, only useful as logical type
-	LIST         = 24,
+	LIST            = 24,
 
 	// struct type, only useful as logical type
-	STRUCT       = 25,
+	STRUCT          = 25,
 
 	// map type, only useful as logical type
-	MAP          = 26,
+	MAP             = 26,
 
 	// duckdb_array, only useful as logical type
-	ARRAY        = 33,
+	ARRAY           = 33,
 
 	// duckdb_hugeint
-	UUID         = 27,
+	UUID            = 27,
 
 	// union type, only useful as logical type
-	UNION        = 28,
+	UNION           = 28,
 
 	// duckdb_bit
-	BIT          = 29,
+	BIT             = 29,
 
 	// duckdb_time_tz
-	TIME_TZ      = 30,
+	TIME_TZ         = 30,
 
-	// duckdb_timestamp
-	TIMESTAMP_TZ = 31,
+	// duckdb_timestamp (microseconds)
+	TIMESTAMP_TZ    = 31,
 
-	// ANY type
-	ANY          = 34,
+	// enum type, only useful as logical type
+	ANY             = 34,
 
-	// duckdb_varint
-	VARINT       = 35,
+	// duckdb_bignum
+	BIGNUM          = 35,
 
-	// SQLNULL type
-	SQLNULL      = 36,
+	// enum type, only useful as logical type
+	SQLNULL         = 36,
+
+	// enum type, only useful as logical type
+	STRING_LITERAL  = 37,
+
+	// enum type, only useful as logical type
+	INTEGER_LITERAL = 38,
+
+	// duckdb_time_ns (nanoseconds)
+	TIME_NS         = 39,
+
+	// GEOMETRY type, WKB blob
+	GEOMETRY        = 40,
+
+	// VARIANT type
+	VARIANT         = 41,
 }
 
-//===--------------------------------------------------------------------===//
-// Enums
-//===--------------------------------------------------------------------===//
-// WARNING: the numbers of these enums should not be changed, as changing the numbers breaks ABI compatibility
-// Always add enums at the END of the enum
 //! An enum over DuckDB's internal types.
 Type :: Duckdb_Type
 
@@ -223,7 +341,7 @@ Statement_Type :: enum u32 {
 	MULTI        = 27,
 }
 
-//! An enum over DuckDB's different result types.
+//! An enum over DuckDB's different error types.
 Error_Type :: enum u32 {
 	ERROR_INVALID                = 0,
 	ERROR_OUT_OF_RANGE           = 1,
@@ -279,18 +397,76 @@ Cast_Mode :: enum u32 {
 	TRY    = 1,
 }
 
+File_Flag :: enum u32 {
+	INVALID    = 0,
+
+	// Open the file with "read" capabilities.
+	READ       = 1,
+
+	// Open the file with "write" capabilities.
+	WRITE      = 2,
+
+	// Create a new file, or open if it already exists.
+	CREATE     = 3,
+
+	// Create a new file, or fail if it already exists.
+	CREATE_NEW = 4,
+
+	// Open the file in "append" mode.
+	APPEND     = 5,
+}
+
+//! An enum over DuckDB's configuration option scopes.
+//! This enum can be used to specify the default scope when creating a custom configuration option,
+//! but it is also be used to determine the scope in which a configuration option is set when it is
+//! changed or retrieved.
+Config_Option_Scope :: enum u32 {
+	INVALID = 0,
+
+	// The option is set for the duration of the current transaction only.
+	// !! CURRENTLY NOT IMPLEMENTED !!
+	LOCAL   = 1,
+
+	// The option is set for the current session/connection only.
+	SESSION = 2,
+
+	// Set the option globally for all sessions/connections.
+	GLOBAL  = 3,
+}
+
+//! An enum over DuckDB's catalog entry types.
+Catalog_Entry_Type :: enum u32 {
+	INVALID            = 0,
+	TABLE              = 1,
+	SCHEMA             = 2,
+	VIEW               = 3,
+	INDEX              = 4,
+	PREPARED_STATEMENT = 5,
+	SEQUENCE           = 6,
+	COLLATION          = 7,
+	TYPE               = 8,
+	DATABASE           = 9,
+}
+
 //! DuckDB's index type.
 Idx_T :: u64
 
-//! The callback that will be called to destroy data, e.g.,
-//! bind data (if any), init data (if any), extra data for replacement scans (if any)
+//! Type definition for the data pointers of selection vectors.
+Sel_T :: u32
+
+//! The callback to destroy data, e.g.,
+//! bind data (if any), init data (if any), extra data for replacement scans (if any), etc.
 Delete_Callback_T :: proc "c" (data: rawptr)
 
-//! Used for threading, contains a task state. Must be destroyed with `duckdb_destroy_state`.
+//! The callback to copy data, e.g., bind data (if any).
+Copy_Callback_T :: proc "c" (data: rawptr) -> rawptr
+
+//! Used for threading, contains a task state.
+//! Must be destroyed with `duckdb_destroy_task_state`.
 Task_State :: rawptr
 
-//! Days are stored as days since 1970-01-01
-//! Use the duckdb_from_date/duckdb_to_date function to extract individual information
+//! DATE is stored as days since 1970-01-01.
+//! Use the `duckdb_from_date` and `duckdb_to_date` functions to extract individual information.
 Date :: struct {
 	days: i32,
 }
@@ -301,8 +477,8 @@ Date_Struct :: struct {
 	day:   i8,
 }
 
-//! Time is stored as microseconds since 00:00:00
-//! Use the duckdb_from_time/duckdb_to_time function to extract individual information
+//! TIME is stored as microseconds since 00:00:00.
+//! Use the `duckdb_from_time` and `duckdb_to_time` functions to extract individual information.
 Time :: struct {
 	micros: i64,
 }
@@ -314,7 +490,13 @@ Time_Struct :: struct {
 	micros: i32,
 }
 
-//! TIME_TZ is stored as 40 bits for int64_t micros, and 24 bits for int32_t offset
+//! TIME_NS is stored as nanoseconds since 00:00:00.
+Time_Ns :: struct {
+	nanos: i64,
+}
+
+//! TIME_TZ is stored as 40 bits for the int64_t microseconds, and 24 bits for the int32_t offset.
+//! Use the `duckdb_from_time_tz` function to extract individual information.
 Time_Tz :: struct {
 	bits: u64,
 }
@@ -324,8 +506,8 @@ Time_Tz_Struct :: struct {
 	offset: i32,
 }
 
-//! Timestamps are stored as microseconds since 1970-01-01
-//! Use the duckdb_from_timestamp/duckdb_to_timestamp function to extract individual information
+//! TIMESTAMP is stored as microseconds since 1970-01-01.
+//! Use the `duckdb_from_timestamp` and `duckdb_to_timestamp` functions to extract individual information.
 Timestamp :: struct {
 	micros: i64,
 }
@@ -335,33 +517,53 @@ Timestamp_Struct :: struct {
 	time: Time_Struct,
 }
 
+//! TIMESTAMP_S is stored as seconds since 1970-01-01.
+Timestamp_S :: struct {
+	seconds: i64,
+}
+
+//! TIMESTAMP_MS is stored as milliseconds since 1970-01-01.
+Timestamp_Ms :: struct {
+	millis: i64,
+}
+
+//! TIMESTAMP_NS is stored as nanoseconds since 1970-01-01.
+Timestamp_Ns :: struct {
+	nanos: i64,
+}
+
+//! INTERVAL is stored in months, days, and micros.
 Interval :: struct {
 	months: i32,
 	days:   i32,
 	micros: i64,
 }
 
-//! Hugeints are composed of a (lower, upper) component
-//! The value of the hugeint is upper * 2^64 + lower
-//! For easy usage, the functions duckdb_hugeint_to_double/duckdb_double_to_hugeint are recommended
+//! HUGEINT is composed of a lower and upper component.
+//! Its value is upper * 2^64 + lower.
+//! For simplified usage, use `duckdb_hugeint_to_double` and `duckdb_double_to_hugeint`.
 Hugeint :: struct {
 	lower: u64,
 	upper: i64,
 }
 
+//! UHUGEINT is composed of a lower and upper component.
+//! Its value is upper * 2^64 + lower.
+//! For simplified usage, use `duckdb_uhugeint_to_double` and `duckdb_double_to_uhugeint`.
 Uhugeint :: struct {
 	lower: u64,
 	upper: u64,
 }
 
-//! Decimals are composed of a width and a scale, and are stored in a hugeint
+//! DECIMAL is composed of a width and a scale.
+//! Their value is stored in a HUGEINT.
 Decimal :: struct {
 	width: u8,
 	scale: u8,
 	value: Hugeint,
 }
 
-//! A type holding information about the query execution progress
+//! A type holding information about the query execution progress.
 Query_Progress_Type :: struct {
 	percentage:            f64,
 	rows_processed:        u64,
@@ -369,7 +571,7 @@ Query_Progress_Type :: struct {
 }
 
 //! The internal representation of a VARCHAR (string_t). If the VARCHAR does not
-//! exceed 12 characters, then we inline it. Otherwise, we inline a prefix for faster
+//! exceed 12 characters, then we inline it. Otherwise, we inline a four-byte prefix for faster
 //! string comparisons and store a pointer to the remaining characters. This is a non-
 //! owning structure, i.e., it does not have to be freed.
 String_T :: struct {
@@ -387,83 +589,122 @@ String_T :: struct {
 	},
 }
 
-//! The internal representation of a list metadata entry contains the list's offset in
-//! the child vector, and its length. The parent vector holds these metadata entries,
-//! whereas the child vector holds the data
+//! DuckDB's LISTs are composed of a 'parent' vector holding metadata of each list,
+//! and a child vector holding the entries of the lists.
+//! The `duckdb_list_entry` struct contains the internal representation of a LIST metadata entry.
+//! A metadata entry contains the length of the list, and its offset in the child vector.
 List_Entry :: struct {
 	offset: u64,
 	length: u64,
 }
 
 //! A column consists of a pointer to its internal data. Don't operate on this type directly.
-//! Instead, use functions such as duckdb_column_data, duckdb_nullmask_data,
-//! duckdb_column_type, and duckdb_column_name, which take the result and the column index
-//! as their parameters
+//! Instead, use functions such as `duckdb_column_data`, `duckdb_nullmask_data`,
+//! `duckdb_column_type`, and `duckdb_column_name`.
 Column :: struct {
-	// deprecated, use duckdb_column_data
+	// Deprecated, use `duckdb_column_data`.
 	deprecated_data: rawptr,
 
-	// deprecated, use duckdb_nullmask_data
+	// Deprecated, use `duckdb_nullmask_data`.
 	deprecated_nullmask: ^bool,
 
-	// deprecated, use duckdb_column_type
+	// Deprecated, use `duckdb_column_type`.
 	deprecated_type: Type,
 
-	// deprecated, use duckdb_column_name
+	// Deprecated, use `duckdb_column_name`.
 	deprecated_name: cstring,
 	internal_data:   rawptr,
 }
 
-//! A vector to a specified column in a data chunk. Lives as long as the
-//! data chunk lives, i.e., must not be destroyed.
+//! 1. A standalone vector that must be destroyed, or
+//! 2. A vector to a column in a data chunk that lives as long as the data chunk lives.
 _Duckdb_Vector :: struct {
 	internal_ptr: rawptr,
 }
 
-//! A vector to a specified column in a data chunk. Lives as long as the
-//! data chunk lives, i.e., must not be destroyed.
+//! 1. A standalone vector that must be destroyed, or
+//! 2. A vector to a column in a data chunk that lives as long as the data chunk lives.
 Vector :: ^_Duckdb_Vector
 
-//! Strings are composed of a char pointer and a size. You must free string.data
-//! with `duckdb_free`.
+//! A selection vector is a vector of indices, which usually refer to values in a vector.
+//! Can be used to slice vectors, changing their length and the order of their entries.
+//! Standalone selection vectors must be destroyed.
+_Duckdb_Selection_Vector :: struct {
+	internal_ptr: rawptr,
+}
+
+//! A selection vector is a vector of indices, which usually refer to values in a vector.
+//! Can be used to slice vectors, changing their length and the order of their entries.
+//! Standalone selection vectors must be destroyed.
+Selection_Vector :: ^_Duckdb_Selection_Vector
+
+//! Strings are composed of a `char` pointer and a size.
+//! You must free `string.data` with `duckdb_free`.
 String :: struct {
 	data: cstring,
 	size: Idx_T,
 }
 
-//! BLOBs are composed of a byte pointer and a size. You must free blob.data
-//! with `duckdb_free`.
+//! BLOBs are composed of a byte pointer and a size.
+//! You must free `blob.data` with `duckdb_free`.
 Blob :: struct {
 	data: rawptr,
 	size: Idx_T,
 }
 
+//! BITs are composed of a byte pointer and a size.
+//! BIT byte data has 0 to 7 bits of padding.
+//! The first byte contains the number of padding bits.
+//! The padding bits of the second byte are set to 1, starting from the MSB.
+//! You must free `data` with `duckdb_free`.
+Bit :: struct {
+	data: ^u8,
+	size: Idx_T,
+}
+
+//! BIGNUMs are composed of a byte pointer, a size, and an `is_negative` bool.
+//! The absolute value of the number is stored in `data` in little endian format.
+//! You must free `data` with `duckdb_free`.
+Bignum :: struct {
+	data:        ^u8,
+	size:        Idx_T,
+	is_negative: bool,
+}
+
 //! A query result consists of a pointer to its internal data.
 //! Must be freed with 'duckdb_destroy_result'.
 Result :: struct {
-	// deprecated, use duckdb_column_count
+	// Deprecated, use `duckdb_column_count`.
 	deprecated_column_count: Idx_T,
 
-	// deprecated, use duckdb_row_count
+	// Deprecated, use `duckdb_row_count`.
 	deprecated_row_count: Idx_T,
 
-	// deprecated, use duckdb_rows_changed
+	// Deprecated, use `duckdb_rows_changed`.
 	deprecated_rows_changed: Idx_T,
 
-	// deprecated, use duckdb_column_*-family of functions
+	// Deprecated, use `duckdb_column_*`-family of functions.
 	deprecated_columns: ^Column,
 
-	// deprecated, use duckdb_result_error
+	// Deprecated, use `duckdb_result_error`.
 	deprecated_error_message: cstring,
 	internal_data:            rawptr,
 }
 
-//! A database object. Should be closed with `duckdb_close`.
+//! A database instance cache object. Must be destroyed with `duckdb_destroy_instance_cache`.
+_Duckdb_Instance_Cache :: struct {
+	internal_ptr: rawptr,
+}
+
+//! A database instance cache object. Must be destroyed with `duckdb_destroy_instance_cache`.
+Instance_Cache :: ^_Duckdb_Instance_Cache
+
+//! A database object. Must be closed with `duckdb_close`.
 _Duckdb_Database :: struct {
 	internal_ptr: rawptr,
 }
 
-//! A database object. Should be closed with `duckdb_close`.
+//! A database object. Must be closed with `duckdb_close`.
 Database :: ^_Duckdb_Database
 
 //! A connection to a duckdb database. Must be closed with `duckdb_disconnect`.
@@ -473,6 +714,14 @@ _Duckdb_Connection :: struct {
 
 //! A connection to a duckdb database. Must be closed with `duckdb_disconnect`.
 Connection :: ^_Duckdb_Connection
+
+//! A client context of a duckdb connection. Must be destroyed with `duckdb_destroy_context`.
+_Duckdb_Client_Context :: struct {
+	internal_ptr: rawptr,
+}
+
+//! A client context of a duckdb connection. Must be destroyed with `duckdb_destroy_context`.
+Client_Context :: ^_Duckdb_Client_Context
 
 //! A prepared statement is a parameterized query that allows you to bind parameters to it.
 //! Must be destroyed with `duckdb_destroy_prepare`.
@@ -512,113 +761,149 @@ _Duckdb_Appender :: struct {
 //! Must be destroyed with `duckdb_appender_destroy`.
 Appender :: ^_Duckdb_Appender
 
-//! The table description allows querying info about the table.
+//! The table description allows querying information about the table.
 //! Must be destroyed with `duckdb_table_description_destroy`.
 _Duckdb_Table_Description :: struct {
 	internal_ptr: rawptr,
 }
 
-//! The table description allows querying info about the table.
+//! The table description allows querying information about the table.
 //! Must be destroyed with `duckdb_table_description_destroy`.
 Table_Description :: ^_Duckdb_Table_Description
 
-//! Can be used to provide start-up options for the DuckDB instance.
+//! The configuration can be used to provide start-up options for a database.
 //! Must be destroyed with `duckdb_destroy_config`.
 _Duckdb_Config :: struct {
 	internal_ptr: rawptr,
 }
 
-//! Can be used to provide start-up options for the DuckDB instance.
+//! The configuration can be used to provide start-up options for a database.
 //! Must be destroyed with `duckdb_destroy_config`.
 Config :: ^_Duckdb_Config
 
-//! Holds an internal logical type.
+//! A custom configuration option instance. Used to register custom options that can be set on a duckdb_config.
+//! or by the user in SQL using `SET <option_name> = <value>`.
+_Duckdb_Config_Option :: struct {
+	internal_ptr: rawptr,
+}
+
+//! A custom configuration option instance. Used to register custom options that can be set on a duckdb_config.
+//! or by the user in SQL using `SET <option_name> = <value>`.
+Config_Option :: ^_Duckdb_Config_Option
+
+//! A logical type.
 //! Must be destroyed with `duckdb_destroy_logical_type`.
 _Duckdb_Logical_Type :: struct {
 	internal_ptr: rawptr,
 }
 
-//! Holds an internal logical type.
+//! A logical type.
 //! Must be destroyed with `duckdb_destroy_logical_type`.
 Logical_Type :: ^_Duckdb_Logical_Type
 
-//! Holds extra information used when registering a custom logical type.
+//! Holds extra information to register a custom logical type.
 //! Reserved for future use.
 _Duckdb_Create_Type_Info :: struct {
 	internal_ptr: rawptr,
 }
 
-//! Holds extra information used when registering a custom logical type.
+//! Holds extra information to register a custom logical type.
 //! Reserved for future use.
 Create_Type_Info :: ^_Duckdb_Create_Type_Info
 
-//! Contains a data chunk from a duckdb_result.
+//! Contains a data chunk of a duckdb_result.
 //! Must be destroyed with `duckdb_destroy_data_chunk`.
 _Duckdb_Data_Chunk :: struct {
 	internal_ptr: rawptr,
 }
 
-//! Contains a data chunk from a duckdb_result.
+//! Contains a data chunk of a duckdb_result.
 //! Must be destroyed with `duckdb_destroy_data_chunk`.
 Data_Chunk :: ^_Duckdb_Data_Chunk
 
-//! Holds a DuckDB value, which wraps a type.
+//! A value of a logical type.
 //! Must be destroyed with `duckdb_destroy_value`.
 _Duckdb_Value :: struct {
 	internal_ptr: rawptr,
 }
 
-//! Holds a DuckDB value, which wraps a type.
+//! A value of a logical type.
 //! Must be destroyed with `duckdb_destroy_value`.
 Value :: ^_Duckdb_Value
 
-//! Holds a recursive tree that matches the query plan.
+//! Holds a recursive tree containing profiling metrics.
+//! The tree matches the query plan, and has a top-level node.
 _Duckdb_Profiling_Info :: struct {
 	internal_ptr: rawptr,
 }
 
-//! Holds a recursive tree that matches the query plan.
+//! Holds a recursive tree containing profiling metrics.
+//! The tree matches the query plan, and has a top-level node.
 Profiling_Info :: ^_Duckdb_Profiling_Info
 
-//===--------------------------------------------------------------------===//
-// C API Extension info
-//===--------------------------------------------------------------------===//
-//! Holds state during the C API extension intialization process
+//! Holds error data.
+//! Must be destroyed with `duckdb_destroy_error_data`.
+_Duckdb_Error_Data :: struct {
+	internal_ptr: rawptr,
+}
+
+//! Holds error data.
+//! Must be destroyed with `duckdb_destroy_error_data`.
+Error_Data :: ^_Duckdb_Error_Data
+
+//! Holds a bound expression.
+//! Must be destroyed with `duckdb_destroy_expression`.
+_Duckdb_Expression :: struct {
+	internal_ptr: rawptr,
+}
+
+//! Holds a bound expression.
+//! Must be destroyed with `duckdb_destroy_expression`.
+Expression :: ^_Duckdb_Expression
+
+//! Holds the state of the C API extension initialization process.
 _Duckdb_Extension_Info :: struct {
 	internal_ptr: rawptr,
 }
 
-//===--------------------------------------------------------------------===//
-// C API Extension info
-//===--------------------------------------------------------------------===//
-//! Holds state during the C API extension intialization process
+//! Holds the state of the C API extension initialization process.
 Extension_Info :: ^_Duckdb_Extension_Info
 
-//===--------------------------------------------------------------------===//
-// Function types
-//===--------------------------------------------------------------------===//
-//! Additional function info. When setting this info, it is necessary to pass a destroy-callback function.
+//! Additional function info.
+//! When setting this info, it is necessary to pass a destroy-callback function.
 _Duckdb_Function_Info :: struct {
 	internal_ptr: rawptr,
 }
 
-//===--------------------------------------------------------------------===//
-// Function types
-//===--------------------------------------------------------------------===//
-//! Additional function info. When setting this info, it is necessary to pass a destroy-callback function.
+//! Additional function info.
+//! When setting this info, it is necessary to pass a destroy-callback function.
 Function_Info :: ^_Duckdb_Function_Info
 
-//===--------------------------------------------------------------------===//
-// Scalar function types
-//===--------------------------------------------------------------------===//
+//! The bind info of a function.
+//! When setting this info, it is necessary to pass a destroy-callback function.
+_Duckdb_Bind_Info :: struct {
+	internal_ptr: rawptr,
+}
+
+//! The bind info of a function.
+//! When setting this info, it is necessary to pass a destroy-callback function.
+Bind_Info :: ^_Duckdb_Bind_Info
+
+//! Additional function initialization info.
+//! When setting this info, it is necessary to pass a destroy-callback function.
+_Duckdb_Init_Info :: struct {
+	internal_ptr: rawptr,
+}
+
+//! Additional function initialization info.
+//! When setting this info, it is necessary to pass a destroy-callback function.
+Init_Info :: ^_Duckdb_Init_Info
+
 //! A scalar function. Must be destroyed with `duckdb_destroy_scalar_function`.
 _Duckdb_Scalar_Function :: struct {
 	internal_ptr: rawptr,
 }
 
-//===--------------------------------------------------------------------===//
-// Scalar function types
-//===--------------------------------------------------------------------===//
 //! A scalar function. Must be destroyed with `duckdb_destroy_scalar_function`.
 Scalar_Function :: ^_Duckdb_Scalar_Function
 
@@ -630,20 +915,20 @@ _Duckdb_Scalar_Function_Set :: struct {
 //! A scalar function set. Must be destroyed with `duckdb_destroy_scalar_function_set`.
 Scalar_Function_Set :: ^_Duckdb_Scalar_Function_Set
 
-//! The main function of the scalar function.
+//! The bind function callback of the scalar function.
+Scalar_Function_Bind_T :: proc "c" (info: Bind_Info)
+
+//! The thread-local initialization function of the scalar function.
+Scalar_Function_Init_T :: proc "c" (info: Init_Info)
+
+//! The function to execute the scalar function on an input chunk.
 Scalar_Function_T :: proc "c" (info: Function_Info, input: Data_Chunk, output: Vector)
 
-//===--------------------------------------------------------------------===//
-// Aggregate function types
-//===--------------------------------------------------------------------===//
 //! An aggregate function. Must be destroyed with `duckdb_destroy_aggregate_function`.
 _Duckdb_Aggregate_Function :: struct {
 	internal_ptr: rawptr,
 }
 
-//===--------------------------------------------------------------------===//
-// Aggregate function types
-//===--------------------------------------------------------------------===//
 //! An aggregate function. Must be destroyed with `duckdb_destroy_aggregate_function`.
 Aggregate_Function :: ^_Duckdb_Aggregate_Function
 
@@ -655,30 +940,30 @@ _Duckdb_Aggregate_Function_Set :: struct {
 //! A aggregate function set. Must be destroyed with `duckdb_destroy_aggregate_function_set`.
 Aggregate_Function_Set :: ^_Duckdb_Aggregate_Function_Set
 
-//! Aggregate state
+//! The state of an aggregate function.
 _Duckdb_Aggregate_State :: struct {
 	internal_ptr: rawptr,
 }
 
-//! Aggregate state
+//! The state of an aggregate function.
 Aggregate_State :: ^_Duckdb_Aggregate_State
 
-//! Returns the aggregate state size
+//! A function to return the aggregate state's size.
 Aggregate_State_Size :: proc "c" (info: Function_Info) -> Idx_T
 
-//! Initialize the aggregate state
+//! A function to initialize an aggregate state.
 Aggregate_Init_T :: proc "c" (info: Function_Info, state: Aggregate_State)
 
-//! Destroy aggregate state (optional)
+//! An optional function to destroy an aggregate state.
 Aggregate_Destroy_T :: proc "c" (states: ^Aggregate_State, count: Idx_T)
 
-//! Update a set of aggregate states with new values
+//! A function to update a set of aggregate states with new values.
 Aggregate_Update_T :: proc "c" (info: Function_Info, input: Data_Chunk, states: ^Aggregate_State)
 
-//! Combine aggregate states
+//! A function to combine aggregate states.
 Aggregate_Combine_T :: proc "c" (info: Function_Info, source: ^Aggregate_State, target: ^Aggregate_State, count: Idx_T)
 
-//! Finalize aggregate states into a result vector
+//! A function to finalize aggregate states into a result vector.
 Aggregate_Finalize_T :: proc "c" (info: Function_Info, source: ^Aggregate_State, result: Vector, count: Idx_T, offset: Idx_T)
 
 //! A table function. Must be destroyed with `duckdb_destroy_table_function`.
@@ -689,30 +974,66 @@ _Duckdb_Table_Function :: struct {
 //! A table function. Must be destroyed with `duckdb_destroy_table_function`.
 Table_Function :: ^_Duckdb_Table_Function
 
-//! The bind info of the function. When setting this info, it is necessary to pass a destroy-callback function.
-_Duckdb_Bind_Info :: struct {
-	internal_ptr: rawptr,
-}
-
-//! The bind info of the function. When setting this info, it is necessary to pass a destroy-callback function.
-Bind_Info :: ^_Duckdb_Bind_Info
-
-//! Additional function init info. When setting this info, it is necessary to pass a destroy-callback function.
-_Duckdb_Init_Info :: struct {
-	internal_ptr: rawptr,
-}
-
-//! Additional function init info. When setting this info, it is necessary to pass a destroy-callback function.
-Init_Info :: ^_Duckdb_Init_Info
-
 //! The bind function of the table function.
 Table_Function_Bind_T :: proc "c" (info: Bind_Info)
 
-//! The (possibly thread-local) init function of the table function.
+//! The possibly thread-local initialization function of the table function.
 Table_Function_Init_T :: proc "c" (info: Init_Info)
 
-//! The main function of the table function.
+//! The function to generate an output chunk during table function execution.
 Table_Function_T :: proc "c" (info: Function_Info, output: Data_Chunk)
+
+//! A COPY function. Must be destroyed with `duckdb_destroy_copy_function`.
+_Duckdb_Copy_Function :: struct {
+	internal_ptr: rawptr,
+}
+
+//! A COPY function. Must be destroyed with `duckdb_destroy_copy_function`.
+Copy_Function :: ^_Duckdb_Copy_Function
+
+//! Info for the bind function of a COPY function.
+_Duckdb_Copy_Function_Bind_Info :: struct {
+	internal_ptr: rawptr,
+}
+
+//! Info for the bind function of a COPY function.
+Copy_Function_Bind_Info :: ^_Duckdb_Copy_Function_Bind_Info
+
+//! Info for the global initialization function of a COPY function.
+_Duckdb_Copy_Function_Global_Init_Info :: struct {
+	internal_ptr: rawptr,
+}
+
+//! Info for the global initialization function of a COPY function.
+Copy_Function_Global_Init_Info :: ^_Duckdb_Copy_Function_Global_Init_Info
+
+//! Info for the sink function of a COPY function.
+_Duckdb_Copy_Function_Sink_Info :: struct {
+	internal_ptr: rawptr,
+}
+
+//! Info for the sink function of a COPY function.
+Copy_Function_Sink_Info :: ^_Duckdb_Copy_Function_Sink_Info
+
+//! Info for the finalize function of a COPY function.
+_Duckdb_Copy_Function_Finalize_Info :: struct {
+	internal_ptr: rawptr,
+}
+
+//! Info for the finalize function of a COPY function.
+Copy_Function_Finalize_Info :: ^_Duckdb_Copy_Function_Finalize_Info
+
+//! The bind function to use when binding a COPY ... TO function.
+Copy_Function_Bind_T :: proc "c" (info: Copy_Function_Bind_Info)
+
+//! The initialization function to use when initializing a COPY ... TO function.
+Copy_Function_Global_Init_T :: proc "c" (info: Copy_Function_Global_Init_Info)
+
+//! The function to sink an input chunk into during execution of a COPY ... TO function.
+Copy_Function_Sink_T :: proc "c" (info: Copy_Function_Sink_Info, input: Data_Chunk)
+
+//! The function to finalize the COPY ... TO function execution.
+Copy_Function_Finalize_T :: proc "c" (info: Copy_Function_Finalize_Info)
 
 //! A cast function. Must be destroyed with `duckdb_destroy_cast_function`.
 _Duckdb_Cast_Function :: struct {
@@ -720,7 +1041,9 @@ _Duckdb_Cast_Function :: struct {
 }
 
 //! A cast function. Must be destroyed with `duckdb_destroy_cast_function`.
-Cast_Function   :: ^_Duckdb_Cast_Function
+Cast_Function :: ^_Duckdb_Cast_Function
+
+//! The function to cast from an input vector to an output vector.
 Cast_Function_T :: proc "c" (info: Function_Info, count: Idx_T, input: Vector, output: Vector) -> bool
 
 //! Additional replacement scan info. When setting this info, it is necessary to pass a destroy-callback function.
@@ -731,8 +1054,14 @@ _Duckdb_Replacement_Scan_Info :: struct {
 //! Additional replacement scan info. When setting this info, it is necessary to pass a destroy-callback function.
 Replacement_Scan_Info :: ^_Duckdb_Replacement_Scan_Info
 
-//! A replacement scan function that can be added to a database.
+//! A replacement scan function.
 Replacement_Callback_T :: proc "c" (info: Replacement_Scan_Info, table_name: cstring, data: rawptr)
+
+//! Forward declare Arrow structs
+//! It is important to notice that these structs are not defined by DuckDB but are actually Arrow external objects.
+//! They're defined by the C Data Interface Arrow spec: https://arrow.apache.org/docs/format/CDataInterface.html
+ArrowArray  :: struct {}
+ArrowSchema :: struct {}
 
 //! Holds an arrow query result. Must be destroyed with `duckdb_destroy_arrow`.
 _Duckdb_Arrow :: struct {
@@ -758,37 +1087,143 @@ _Duckdb_Arrow_Schema :: struct {
 //! Holds an arrow schema. Remember to release the respective ArrowSchema object.
 Arrow_Schema :: ^_Duckdb_Arrow_Schema
 
-//! Holds an arrow array. Remember to release the respective ArrowArray object.
+//! Holds an arrow converted schema (i.e., duckdb::ArrowTableSchema).
+//! In practice, this object holds the information necessary to do proper conversion between Arrow Types and DuckDB
+//! Types. Check duckdb/function/table/arrow/arrow_duck_schema.hpp for more details! Must be destroyed with
+//! `duckdb_destroy_arrow_converted_schema`
+_Duckdb_Arrow_Converted_Schema :: struct {
+	internal_ptr: rawptr,
+}
+
+//! Holds an arrow converted schema (i.e., duckdb::ArrowTableSchema).
+//! In practice, this object holds the information necessary to do proper conversion between Arrow Types and DuckDB
+//! Types. Check duckdb/function/table/arrow/arrow_duck_schema.hpp for more details! Must be destroyed with
+//! `duckdb_destroy_arrow_converted_schema`
+Arrow_Converted_Schema :: ^_Duckdb_Arrow_Converted_Schema
+
+//! Holds an arrow array. Remember to release the respective ArrowSchema object.
 _Duckdb_Arrow_Array :: struct {
 	internal_ptr: rawptr,
 }
 
-//! Holds an arrow array. Remember to release the respective ArrowArray object.
+//! Holds an arrow array. Remember to release the respective ArrowSchema object.
 Arrow_Array :: ^_Duckdb_Arrow_Array
 
+//! The arrow options used when transforming the DuckDB schema and datachunks into Arrow schema and arrays.
+//! Used in `duckdb_to_arrow_schema` and `duckdb_data_chunk_to_arrow`
+_Duckdb_Arrow_Options :: struct {
+	internal_ptr: rawptr,
+}
+
+//! The arrow options used when transforming the DuckDB schema and datachunks into Arrow schema and arrays.
+//! Used in `duckdb_to_arrow_schema` and `duckdb_data_chunk_to_arrow`
+Arrow_Options :: ^_Duckdb_Arrow_Options
+
 //===--------------------------------------------------------------------===//
-// DuckDB extension access
+// Virtual File System Access
 //===--------------------------------------------------------------------===//
-//! Passed to C API extension as parameter to the entrypoint
+_Duckdb_File_Open_Options :: struct {
+	internal_ptr: rawptr,
+}
+
+//===--------------------------------------------------------------------===//
+// Virtual File System Access
+//===--------------------------------------------------------------------===//
+File_Open_Options :: ^_Duckdb_File_Open_Options
+
+_Duckdb_File_System :: struct {
+	internal_ptr: rawptr,
+}
+
+File_System :: ^_Duckdb_File_System
+
+_Duckdb_File_Handle :: struct {
+	internal_ptr: rawptr,
+}
+
+File_Handle :: ^_Duckdb_File_Handle
+
+//! A handle to a database catalog.
+//! Must be destroyed with `duckdb_destroy_catalog`.
+_Duckdb_Catalog :: struct {
+	internal_ptr: rawptr,
+}
+
+//! A handle to a database catalog.
+//! Must be destroyed with `duckdb_destroy_catalog`.
+Catalog :: ^_Duckdb_Catalog
+
+//! A handle to a catalog entry (e.g., table, view, index, etc.).
+//! Must be destroyed with `duckdb_destroy_catalog_entry`.
+_Duckdb_Catalog_Entry :: struct {
+	internal_ptr: rawptr,
+}
+
+//! A handle to a catalog entry (e.g., table, view, index, etc.).
+//! Must be destroyed with `duckdb_destroy_catalog_entry`.
+Catalog_Entry :: ^_Duckdb_Catalog_Entry
+
+//! Holds a log storage object.
+_Duckdb_Log_Storage :: struct {
+	internal_ptr: rawptr,
+}
+
+//! Holds a log storage object.
+Log_Storage :: ^_Duckdb_Log_Storage
+
+//! This function is missing the logging context, which will be added later.
+Logger_Write_Log_Entry_T :: proc "c" (extra_data: rawptr, timestamp: ^Timestamp, level: cstring, log_type: cstring, log_message: cstring)
+
+//! Passed to C API extension as a parameter to the entrypoint.
 Extension_Access :: struct {
-	//! Indicate that an error has occurred
+	//! Indicate that an error has occurred.
 	set_error: proc "c" (info: Extension_Info, error: cstring),
 
-	//! Fetch the database from duckdb to register extensions to
+	//! Fetch the database on which to register the extension.
 	get_database: proc "c" (info: Extension_Info) -> ^Database,
 
-	//! Fetch the API
+	//! Fetch the API struct pointer.
 	get_api: proc "c" (info: Extension_Info, version: cstring) -> rawptr,
 }
 
 @(default_calling_convention="c", link_prefix="duckdb_")
 foreign lib {
 	/*!
+	Creates a new database instance cache.
+	The instance cache is necessary if a client/program (re)opens multiple databases to the same file within the same
+	process. Must be destroyed with 'duckdb_destroy_instance_cache'.
+	
+	* @return The database instance cache.
+	*/
+	create_instance_cache :: proc() -> Instance_Cache ---
+
+	/*!
+	Creates a new database instance in the instance cache, or retrieves an existing database instance.
+	Must be closed with 'duckdb_close'.
+	
+	* @param instance_cache The instance cache in which to create the database, or from which to take the database.
+	* @param path Path to the database file on disk. Both `nullptr` and `:memory:` open or retrieve an in-memory database.
+	* @param out_database The resulting cached database.
+	* @param config (Optional) configuration used to create the database.
+	* @param out_error If set and the function returns `DuckDBError`, this contains the error message.
+	Note that the error message must be freed using `duckdb_free`.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
+	*/
+	get_or_create_from_cache :: proc(instance_cache: Instance_Cache, path: cstring, out_database: ^Database, config: Config, out_error: ^cstring) -> State ---
+
+	/*!
+	Destroys an existing database instance cache and de-allocates its memory.
+	
+	* @param instance_cache The instance cache to destroy.
+	*/
+	destroy_instance_cache :: proc(instance_cache: ^Instance_Cache) ---
+
+	/*!
 	Creates a new database or opens an existing database file stored at the given path.
 	If no path is given a new in-memory database is created instead.
-	The instantiated database should be closed with 'duckdb_close'.
+	The database must be closed with 'duckdb_close'.
 	
-	* @param path Path to the database file on disk, or `nullptr` or `:memory:` to open an in-memory database.
+	* @param path Path to the database file on disk. Both `nullptr` and `:memory:` open an in-memory database.
 	* @param out_database The result database object.
 	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
 	*/
@@ -796,13 +1231,13 @@ foreign lib {
 
 	/*!
 	Extended version of duckdb_open. Creates a new database or opens an existing database file stored at the given path.
-	The instantiated database should be closed with 'duckdb_close'.
+	The database must be closed with 'duckdb_close'.
 	
-	* @param path Path to the database file on disk, or `nullptr` or `:memory:` to open an in-memory database.
+	* @param path Path to the database file on disk. Both `nullptr` and `:memory:` open an in-memory database.
 	* @param out_database The result database object.
-	* @param config (Optional) configuration used to start up the database system.
-	* @param out_error If set and the function returns DuckDBError, this will contain the reason why the start-up failed.
-	Note that the error must be freed using `duckdb_free`.
+	* @param config (Optional) configuration used to start up the database.
+	* @param out_error If set and the function returns `DuckDBError`, this contains the error message.
+	Note that the error message must be freed using `duckdb_free`.
 	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
 	*/
 	open_ext :: proc(path: cstring, out_database: ^Database, config: Config, out_error: ^cstring) -> State ---
@@ -836,10 +1271,10 @@ foreign lib {
 	interrupt :: proc(connection: Connection) ---
 
 	/*!
-	Get progress of the running query
+	Get the progress of the running query.
 	
-	* @param connection The working connection
-	* @return -1 if no progress or a percentage of the progress
+	* @param connection The connection running the query.
+	* @return The query progress type containing progress information.
 	*/
 	query_progress :: proc(connection: Connection) -> Query_Progress_Type ---
 
@@ -851,11 +1286,60 @@ foreign lib {
 	disconnect :: proc(connection: ^Connection) ---
 
 	/*!
+	Retrieves the client context of the connection.
+	
+	* @param connection The connection.
+	* @param out_context The client context of the connection. Must be destroyed with `duckdb_destroy_client_context`.
+	*/
+	connection_get_client_context :: proc(connection: Connection, out_context: ^Client_Context) ---
+
+	/*!
+	Retrieves the arrow options of the connection.
+	
+	* @param connection The connection.
+	*/
+	connection_get_arrow_options :: proc(connection: Connection, out_arrow_options: ^Arrow_Options) ---
+
+	/*!
+	Returns the connection id of the client context.
+	
+	* @param context The client context.
+	* @return The connection id of the client context.
+	*/
+	client_context_get_connection_id :: proc(_context: Client_Context) -> Idx_T ---
+
+	/*!
+	Destroys the client context and deallocates its memory.
+	
+	* @param context The client context to destroy.
+	*/
+	destroy_client_context :: proc(_context: ^Client_Context) ---
+
+	/*!
+	Destroys the arrow options and deallocates its memory.
+	
+	* @param arrow_options The arrow options to destroy.
+	*/
+	destroy_arrow_options :: proc(arrow_options: ^Arrow_Options) ---
+
+	/*!
 	Returns the version of the linked DuckDB, with a version postfix for dev versions
 	
 	Usually used for developing C extensions that must return this for a compatibility check.
 	*/
 	library_version :: proc() -> cstring ---
+
+	/*!
+	Get the list of (fully qualified) table names of the query.
+	
+	* @param connection The connection for which to get the table names.
+	* @param query The query for which to get the table names.
+	* @param qualified Returns fully qualified table names (catalog.schema.table), if set to true, else only the (not
+	escaped) table names.
+	* @return A duckdb_value of type VARCHAR[] containing the (fully qualified) table names of the query. Must be destroyed
+	with duckdb_destroy_value.
+	*/
+	get_table_names :: proc(connection: Connection, query: cstring, qualified: bool) -> Value ---
 
 	/*!
 	Initializes an empty configuration object that can be used to provide start-up options for the DuckDB instance
@@ -917,6 +1401,47 @@ foreign lib {
 	destroy_config :: proc(config: ^Config) ---
 
 	/*!
+	Creates duckdb_error_data.
+	Must be destroyed with `duckdb_destroy_error_data`.
+	
+	* @param type The error type.
+	* @param message The error message.
+	* @return The error data.
+	*/
+	create_error_data :: proc(type: Error_Type, message: cstring) -> Error_Data ---
+
+	/*!
+	Destroys the error data and deallocates its memory.
+	
+	* @param error_data The error data to destroy.
+	*/
+	destroy_error_data :: proc(error_data: ^Error_Data) ---
+
+	/*!
+	Returns the duckdb_error_type of the error data.
+	
+	* @param error_data The error data.
+	* @return The error type.
+	*/
+	error_data_error_type :: proc(error_data: Error_Data) -> Error_Type ---
+
+	/*!
+	Returns the error message of the error data. Must not be freed.
+	
+	* @param error_data The error data.
+	* @return The error message.
+	*/
+	error_data_message :: proc(error_data: Error_Data) -> cstring ---
+
+	/*!
+	Returns whether the error data contains an error or not.
+	
+	* @param error_data The error data.
+	* @return True, if the error data contains an exception, else false.
+	*/
+	error_data_has_error :: proc(error_data: Error_Data) -> bool ---
+
+	/*!
 	Executes a SQL query within a connection and stores the full (materialized) result in the out_result pointer.
 	If the query fails to execute, DuckDBError is returned and the error message can be retrieved by calling
 	`duckdb_result_error`.
@@ -932,7 +1457,7 @@ foreign lib {
 	query :: proc(connection: Connection, query: cstring, out_result: ^Result) -> State ---
 
 	/*!
-	Closes the result and de-allocates all memory allocated for that connection.
+	Closes the result and de-allocates all memory allocated for that result.
 	
 	* @param result The result to destroy.
 	*/
@@ -981,6 +1506,15 @@ foreign lib {
 	* @return The logical column type of the specified column.
 	*/
 	column_logical_type :: proc(result: ^Result, col: Idx_T) -> Logical_Type ---
+
+	/*!
+	Returns the arrow options associated with the given result. These options are definitions of how the arrow arrays/schema
+	should be produced.
+	* @param result The result object to fetch arrow options from.
+	* @return The arrow options associated with the given result. This must be destroyed with
+	`duckdb_destroy_arrow_options`.
+	*/
+	result_get_arrow_options :: proc(result: ^Result) -> Arrow_Options ---
 
 	/*!
 	Returns the number of columns present in a the result object.
@@ -1248,8 +1782,7 @@ foreign lib {
 	value_interval :: proc(result: ^Result, col: Idx_T, row: Idx_T) -> Interval ---
 
 	/*!
-	**DEPRECATED**: Use duckdb_value_string instead. This function does not work correctly if the string contains null
-	bytes.
+	**DEPRECATION NOTICE**: This method is scheduled for removal in a future release.
 	
 	* @return The text value at the specified location as a null-terminated string, or nullptr if the value cannot be
 	converted. The result must be freed with `duckdb_free`.
@@ -1259,16 +1792,12 @@ foreign lib {
 	/*!
 	**DEPRECATION NOTICE**: This method is scheduled for removal in a future release.
 	
-	No support for nested types, and for other complex types.
-	The resulting field "string.data" must be freed with `duckdb_free.`
-	
 	* @return The string value at the specified location. Attempts to cast the result value to string.
 	*/
 	value_string :: proc(result: ^Result, col: Idx_T, row: Idx_T) -> String ---
 
 	/*!
-	**DEPRECATED**: Use duckdb_value_string_internal instead. This function does not work correctly if the string contains
-	null bytes.
+	**DEPRECATION NOTICE**: This method is scheduled for removal in a future release.
 	
 	* @return The char* value at the specified location. ONLY works on VARCHAR columns and does not auto-cast.
 	If the column is NOT a VARCHAR column this function will return NULL.
@@ -1278,8 +1807,8 @@ foreign lib {
 	value_varchar_internal :: proc(result: ^Result, col: Idx_T, row: Idx_T) -> cstring ---
 
 	/*!
-	**DEPRECATED**: Use duckdb_value_string_internal instead. This function does not work correctly if the string contains
-	null bytes.
+	**DEPRECATION NOTICE**: This method is scheduled for removal in a future release.
+	
 	* @return The char* value at the specified location. ONLY works on VARCHAR columns and does not auto-cast.
 	If the column is NOT a VARCHAR column this function will return NULL.
 	
@@ -1349,6 +1878,16 @@ foreign lib {
 	* @return The pointer.
 	*/
 	string_t_data :: proc(_string: ^String_T) -> cstring ---
+
+	/*!
+	Checks if a string is valid UTF-8.
+	
+	* @param str The string to check
+	* @param len The length of the string (in bytes)
+	* @return nullptr if the string is valid UTF-8. Otherwise, a duckdb_error_data containing error information. Must be
+	destroyed with `duckdb_destroy_error_data`.
+	*/
+	valid_utf8_check :: proc(str: cstring, len: Idx_T) -> Error_Data ---
 
 	/*!
 	Decompose a `duckdb_date` object into year, month and date (stored as `duckdb_date_struct`).
@@ -1427,10 +1966,34 @@ foreign lib {
 	/*!
 	Test a `duckdb_timestamp` to see if it is a finite value.
 	
-	* @param ts The timestamp object, as obtained from a `DUCKDB_TYPE_TIMESTAMP` column.
+	* @param ts The duckdb_timestamp object, as obtained from a `DUCKDB_TYPE_TIMESTAMP` column.
 	* @return True if the timestamp is finite, false if it is ±infinity.
 	*/
 	is_finite_timestamp :: proc(ts: Timestamp) -> bool ---
+
+	/*!
+	Test a `duckdb_timestamp_s` to see if it is a finite value.
+	
+	* @param ts The duckdb_timestamp_s object, as obtained from a `DUCKDB_TYPE_TIMESTAMP_S` column.
+	* @return True if the timestamp is finite, false if it is ±infinity.
+	*/
+	is_finite_timestamp_s :: proc(ts: Timestamp_S) -> bool ---
+
+	/*!
+	Test a `duckdb_timestamp_ms` to see if it is a finite value.
+	
+	* @param ts The duckdb_timestamp_ms object, as obtained from a `DUCKDB_TYPE_TIMESTAMP_MS` column.
+	* @return True if the timestamp is finite, false if it is ±infinity.
+	*/
+	is_finite_timestamp_ms :: proc(ts: Timestamp_Ms) -> bool ---
+
+	/*!
+	Test a `duckdb_timestamp_ns` to see if it is a finite value.
+	
+	* @param ts The duckdb_timestamp_ns object, as obtained from a `DUCKDB_TYPE_TIMESTAMP_NS` column.
+	* @return True if the timestamp is finite, false if it is ±infinity.
+	*/
+	is_finite_timestamp_ns :: proc(ts: Timestamp_Ns) -> bool ---
 
 	/*!
 	Converts a duckdb_hugeint object (as obtained from a `DUCKDB_TYPE_HUGEINT` column) into a double.
@@ -1486,15 +2049,6 @@ foreign lib {
 	*/
 	decimal_to_double :: proc(val: Decimal) -> f64 ---
 
-	// A prepared statement is a parameterized query that allows you to bind parameters to it.
-	// * This is useful to easily supply parameters to functions and avoid SQL injection attacks.
-	// * This is useful to speed up queries that you will execute several times with different parameters.
-	// Because the query will only be parsed, bound, optimized and planned once during the prepare stage,
-	// rather than once per execution.
-	// For example:
-	//   SELECT * FROM tbl WHERE id=?
-	// Or a query with multiple parameters:
-	//   SELECT * FROM tbl WHERE id=$1 OR name=$2
 	/*!
 	Create a prepared statement object from a query.
 	
@@ -1559,6 +2113,19 @@ foreign lib {
 	param_type :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T) -> Type ---
 
 	/*!
+	Returns the logical type for the parameter at the given index.
+	
+	Returns `nullptr` if the parameter index is out of range or the statement was not successfully prepared.
+	
+	The return type of this call should be destroyed with `duckdb_destroy_logical_type`.
+	
+	* @param prepared_statement The prepared statement.
+	* @param param_idx The parameter index.
+	* @return The logical type of the parameter
+	*/
+	param_logical_type :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T) -> Logical_Type ---
+
+	/*!
 	Clear the params bind to the prepared statement.
 	*/
 	clear_bindings :: proc(prepared_statement: Prepared_Statement) -> State ---
@@ -1572,7 +2139,53 @@ foreign lib {
 	prepared_statement_type :: proc(statement: Prepared_Statement) -> Statement_Type ---
 
 	/*!
+	Returns the number of columns present in a the result of the prepared statement. If any of the column types are invalid,
+	the result will be 1.
+	
+	* @param prepared_statement The prepared statement.
+	* @return The number of columns present in the result of the prepared statement.
+	*/
+	prepared_statement_column_count :: proc(prepared_statement: Prepared_Statement) -> Idx_T ---
+
+	/*!
+	Returns the name of the specified column of the result of the prepared_statement.
+	The returned string should be freed using `duckdb_free`.
+	
+	Returns `nullptr` if the column is out of range.
+	
+	* @param prepared_statement The prepared statement.
+	* @param col_idx The column index.
+	* @return The column name of the specified column.
+	*/
+	prepared_statement_column_name :: proc(prepared_statement: Prepared_Statement, col_idx: Idx_T) -> cstring ---
+
+	/*!
+	Returns the column type of the specified column of the result of the prepared_statement.
+	
+	Returns `DUCKDB_TYPE_INVALID` if the column is out of range.
+	The return type of this call should be destroyed with `duckdb_destroy_logical_type`.
+	
+	* @param prepared_statement The prepared statement to fetch the column type from.
+	* @param col_idx The column index.
+	* @return The logical type of the specified column.
+	*/
+	prepared_statement_column_logical_type :: proc(prepared_statement: Prepared_Statement, col_idx: Idx_T) -> Logical_Type ---
+
+	/*!
+	Returns the column type of the specified column of the result of the prepared_statement.
+	
+	Returns `DUCKDB_TYPE_INVALID` if the column is out of range.
+	
+	* @param prepared_statement The prepared statement to fetch the column type from.
+	* @param col_idx The column index.
+	* @return The type of the specified column.
+	*/
+	prepared_statement_column_type :: proc(prepared_statement: Prepared_Statement, col_idx: Idx_T) -> Type ---
+
+	/*!
 	Binds a value to the prepared statement at the specified index.
+	
+	Supersedes all type-specific bind functions (e.g., `duckdb_bind_varchar`, `duckdb_bind_int64`, etc.).
 	*/
 	bind_value :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: Value) -> State ---
 
@@ -1612,7 +2225,7 @@ foreign lib {
 	bind_hugeint :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: Hugeint) -> State ---
 
 	/*!
-	Binds an duckdb_uhugeint value to the prepared statement at the specified index.
+	Binds a duckdb_uhugeint value to the prepared statement at the specified index.
 	*/
 	bind_uhugeint :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: Uhugeint) -> State ---
 
@@ -1622,22 +2235,22 @@ foreign lib {
 	bind_decimal :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: Decimal) -> State ---
 
 	/*!
-	Binds an uint8_t value to the prepared statement at the specified index.
+	Binds a uint8_t value to the prepared statement at the specified index.
 	*/
 	bind_uint8 :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: u8) -> State ---
 
 	/*!
-	Binds an uint16_t value to the prepared statement at the specified index.
+	Binds a uint16_t value to the prepared statement at the specified index.
 	*/
 	bind_uint16 :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: u16) -> State ---
 
 	/*!
-	Binds an uint32_t value to the prepared statement at the specified index.
+	Binds a uint32_t value to the prepared statement at the specified index.
 	*/
 	bind_uint32 :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: u32) -> State ---
 
 	/*!
-	Binds an uint64_t value to the prepared statement at the specified index.
+	Binds a uint64_t value to the prepared statement at the specified index.
 	*/
 	bind_uint64 :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: u64) -> State ---
 
@@ -1678,11 +2291,15 @@ foreign lib {
 
 	/*!
 	Binds a null-terminated varchar value to the prepared statement at the specified index.
+	
+	Superseded by `duckdb_bind_value`.
 	*/
 	bind_varchar :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: cstring) -> State ---
 
 	/*!
 	Binds a varchar value to the prepared statement at the specified index.
+	
+	Superseded by `duckdb_bind_value`.
 	*/
 	bind_varchar_length :: proc(prepared_statement: Prepared_Statement, param_idx: Idx_T, val: cstring, length: Idx_T) -> State ---
 
@@ -1727,7 +2344,6 @@ foreign lib {
 	*/
 	execute_prepared_streaming :: proc(prepared_statement: Prepared_Statement, out_result: ^Result) -> State ---
 
-	// A query string can be extracted into multiple SQL statements. Each statement can be prepared and executed separately.
 	/*!
 	Extract all statements from a query.
 	Note that after calling `duckdb_extract_statements`, the extracted statements should always be destroyed using
@@ -1876,7 +2492,9 @@ foreign lib {
 	destroy_value :: proc(value: ^Value) ---
 
 	/*!
-	Creates a value from a null-terminated string
+	Creates a value from a null-terminated string. Returns nullptr if the string is not valid UTF-8 or other invalid input.
+	
+	Superseded by `duckdb_create_varchar_length`.
 	
 	* @param text The null-terminated string
 	* @return The value. This must be destroyed with `duckdb_destroy_value`.
@@ -1884,7 +2502,7 @@ foreign lib {
 	create_varchar :: proc(text: cstring) -> Value ---
 
 	/*!
-	Creates a value from a string
+	Creates a value from a string. Returns nullptr if the string is not valid UTF-8 or other invalid input.
 	
 	* @param text The text
 	* @param length The length of the text
@@ -1901,7 +2519,7 @@ foreign lib {
 	create_bool :: proc(input: bool) -> Value ---
 
 	/*!
-	Creates a value from a int8_t (a tinyint)
+	Creates a value from an int8_t (a tinyint)
 	
 	* @param input The tinyint value
 	* @return The value. This must be destroyed with `duckdb_destroy_value`.
@@ -1917,7 +2535,7 @@ foreign lib {
 	create_uint8 :: proc(input: u8) -> Value ---
 
 	/*!
-	Creates a value from a int16_t (a smallint)
+	Creates a value from an int16_t (a smallint)
 	
 	* @param input The smallint value
 	* @return The value. This must be destroyed with `duckdb_destroy_value`.
@@ -1933,7 +2551,7 @@ foreign lib {
 	create_uint16 :: proc(input: u16) -> Value ---
 
 	/*!
-	Creates a value from a int32_t (an integer)
+	Creates a value from an int32_t (an integer)
 	
 	* @param input The integer value
 	* @return The value. This must be destroyed with `duckdb_destroy_value`.
@@ -1980,6 +2598,22 @@ foreign lib {
 	create_uhugeint :: proc(input: Uhugeint) -> Value ---
 
 	/*!
+	Creates a BIGNUM value from a duckdb_bignum
+	
+	* @param input The duckdb_bignum value
+	* @return The value. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_bignum :: proc(input: Bignum) -> Value ---
+
+	/*!
+	Creates a DECIMAL value from a duckdb_decimal
+	
+	* @param input The duckdb_decimal value
+	* @return The value. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_decimal :: proc(input: Decimal) -> Value ---
+
+	/*!
 	Creates a value from a float
 	
 	* @param input The float value
@@ -2012,6 +2646,14 @@ foreign lib {
 	create_time :: proc(input: Time) -> Value ---
 
 	/*!
+	Creates a value from a time_ns
+	
+	* @param input The time value
+	* @return The value. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_time_ns :: proc(input: Time_Ns) -> Value ---
+
+	/*!
 	Creates a value from a time_tz.
 	Not to be confused with `duckdb_create_time_tz`, which creates a duckdb_time_tz_t.
 	
@@ -2021,12 +2663,44 @@ foreign lib {
 	create_time_tz_value :: proc(value: Time_Tz) -> Value ---
 
 	/*!
-	Creates a value from a timestamp
+	Creates a TIMESTAMP value from a duckdb_timestamp
 	
-	* @param input The timestamp value
+	* @param input The duckdb_timestamp value
 	* @return The value. This must be destroyed with `duckdb_destroy_value`.
 	*/
 	create_timestamp :: proc(input: Timestamp) -> Value ---
+
+	/*!
+	Creates a TIMESTAMP_TZ value from a duckdb_timestamp
+	
+	* @param input The duckdb_timestamp value
+	* @return The value. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_timestamp_tz :: proc(input: Timestamp) -> Value ---
+
+	/*!
+	Creates a TIMESTAMP_S value from a duckdb_timestamp_s
+	
+	* @param input The duckdb_timestamp_s value
+	* @return The value. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_timestamp_s :: proc(input: Timestamp_S) -> Value ---
+
+	/*!
+	Creates a TIMESTAMP_MS value from a duckdb_timestamp_ms
+	
+	* @param input The duckdb_timestamp_ms value
+	* @return The value. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_timestamp_ms :: proc(input: Timestamp_Ms) -> Value ---
+
+	/*!
+	Creates a TIMESTAMP_NS value from a duckdb_timestamp_ns
+	
+	* @param input The duckdb_timestamp_ns value
+	* @return The value. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_timestamp_ns :: proc(input: Timestamp_Ns) -> Value ---
 
 	/*!
 	Creates a value from an interval
@@ -2044,6 +2718,22 @@ foreign lib {
 	* @return The value. This must be destroyed with `duckdb_destroy_value`.
 	*/
 	create_blob :: proc(data: ^u8, length: Idx_T) -> Value ---
+
+	/*!
+	Creates a BIT value from a duckdb_bit
+	
+	* @param input The duckdb_bit value
+	* @return The value. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_bit :: proc(input: Bit) -> Value ---
+
+	/*!
+	Creates a UUID value from a uhugeint
+	
+	* @param input The duckdb_uhugeint containing the UUID
+	* @return The value. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_uuid :: proc(input: Uhugeint) -> Value ---
 
 	/*!
 	Returns the boolean value of the given value.
@@ -2088,7 +2778,7 @@ foreign lib {
 	/*!
 	Returns the int32_t value of the given value.
 	
-	* @param val A duckdb_value containing a integer
+	* @param val A duckdb_value containing an integer
 	* @return A int32_t, or MinValue<int32> if the value cannot be converted
 	*/
 	get_int32 :: proc(val: Value) -> i32 ---
@@ -2134,6 +2824,23 @@ foreign lib {
 	get_uhugeint :: proc(val: Value) -> Uhugeint ---
 
 	/*!
+	Returns the duckdb_bignum value of the given value.
+	The `data` field must be destroyed with `duckdb_free`.
+	
+	* @param val A duckdb_value containing a BIGNUM
+	* @return A duckdb_bignum. The `data` field must be destroyed with `duckdb_free`.
+	*/
+	get_bignum :: proc(val: Value) -> Bignum ---
+
+	/*!
+	Returns the duckdb_decimal value of the given value.
+	
+	* @param val A duckdb_value containing a DECIMAL
+	* @return A duckdb_decimal, or MinValue<decimal> if the value cannot be converted
+	*/
+	get_decimal :: proc(val: Value) -> Decimal ---
+
+	/*!
 	Returns the float value of the given value.
 	
 	* @param val A duckdb_value containing a float
@@ -2166,6 +2873,14 @@ foreign lib {
 	get_time :: proc(val: Value) -> Time ---
 
 	/*!
+	Returns the time_ns value of the given value.
+	
+	* @param val A duckdb_value containing a time_ns
+	* @return A duckdb_time_ns, or MinValue<time_ns> if the value cannot be converted
+	*/
+	get_time_ns :: proc(val: Value) -> Time_Ns ---
+
+	/*!
 	Returns the time_tz value of the given value.
 	
 	* @param val A duckdb_value containing a time_tz
@@ -2174,12 +2889,44 @@ foreign lib {
 	get_time_tz :: proc(val: Value) -> Time_Tz ---
 
 	/*!
-	Returns the timestamp value of the given value.
+	Returns the TIMESTAMP value of the given value.
 	
-	* @param val A duckdb_value containing a timestamp
+	* @param val A duckdb_value containing a TIMESTAMP
 	* @return A duckdb_timestamp, or MinValue<timestamp> if the value cannot be converted
 	*/
 	get_timestamp :: proc(val: Value) -> Timestamp ---
+
+	/*!
+	Returns the TIMESTAMP_TZ value of the given value.
+	
+	* @param val A duckdb_value containing a TIMESTAMP_TZ
+	* @return A duckdb_timestamp, or MinValue<timestamp_tz> if the value cannot be converted
+	*/
+	get_timestamp_tz :: proc(val: Value) -> Timestamp ---
+
+	/*!
+	Returns the duckdb_timestamp_s value of the given value.
+	
+	* @param val A duckdb_value containing a TIMESTAMP_S
+	* @return A duckdb_timestamp_s, or MinValue<timestamp_s> if the value cannot be converted
+	*/
+	get_timestamp_s :: proc(val: Value) -> Timestamp_S ---
+
+	/*!
+	Returns the duckdb_timestamp_ms value of the given value.
+	
+	* @param val A duckdb_value containing a TIMESTAMP_MS
+	* @return A duckdb_timestamp_ms, or MinValue<timestamp_ms> if the value cannot be converted
+	*/
+	get_timestamp_ms :: proc(val: Value) -> Timestamp_Ms ---
+
+	/*!
+	Returns the duckdb_timestamp_ns value of the given value.
+	
+	* @param val A duckdb_value containing a TIMESTAMP_NS
+	* @return A duckdb_timestamp_ns, or MinValue<timestamp_ns> if the value cannot be converted
+	*/
+	get_timestamp_ns :: proc(val: Value) -> Timestamp_Ns ---
 
 	/*!
 	Returns the interval value of the given value.
@@ -2205,6 +2952,23 @@ foreign lib {
 	* @return A duckdb_blob
 	*/
 	get_blob :: proc(val: Value) -> Blob ---
+
+	/*!
+	Returns the duckdb_bit value of the given value.
+	The `data` field must be destroyed with `duckdb_free`.
+	
+	* @param val A duckdb_value containing a BIT
+	* @return A duckdb_bit
+	*/
+	get_bit :: proc(val: Value) -> Bit ---
+
+	/*!
+	Returns a duckdb_uhugeint representing the UUID value of the given value.
+	
+	* @param val A duckdb_value containing a UUID
+	* @return A duckdb_uhugeint representing the UUID value
+	*/
+	get_uuid :: proc(val: Value) -> Uhugeint ---
 
 	/*!
 	Obtains a string representation of the given value.
@@ -2247,6 +3011,29 @@ foreign lib {
 	create_array_value :: proc(type: Logical_Type, values: ^Value, value_count: Idx_T) -> Value ---
 
 	/*!
+	Creates a map value from a map type and two arrays, one for the keys and one for the values, each of length
+	`entry_count`. Must be destroyed with `duckdb_destroy_value`.
+	
+	* @param map_type The map type
+	* @param keys The keys of the map
+	* @param values The values of the map
+	* @param entry_count The number of entrys (key-value pairs) in the map
+	* @return The map value, or nullptr, if the parameters are invalid.
+	*/
+	create_map_value :: proc(map_type: Logical_Type, keys: ^Value, values: ^Value, entry_count: Idx_T) -> Value ---
+
+	/*!
+	Creates a union value from a union type, a tag index, and a value.
+	Must be destroyed with `duckdb_destroy_value`.
+	
+	* @param union_type The union type
+	* @param tag_index The index of the tag of the union
+	* @param value The value of the union for that tag
+	* @return The union value, or nullptr, if the parameters are invalid.
+	*/
+	create_union_value :: proc(union_type: Logical_Type, tag_index: Idx_T, value: Value) -> Value ---
+
+	/*!
 	Returns the number of elements in a MAP value.
 	
 	* @param value The MAP value.
@@ -2271,6 +3058,72 @@ foreign lib {
 	* @return The value as a duckdb_value.
 	*/
 	get_map_value :: proc(value: Value, index: Idx_T) -> Value ---
+
+	/*!
+	Returns whether the value's type is SQLNULL or not.
+	
+	* @param value The value to check.
+	* @return True, if the value's type is SQLNULL, otherwise false.
+	*/
+	is_null_value :: proc(value: Value) -> bool ---
+
+	/*!
+	Creates a value of type SQLNULL.
+	
+	* @return The duckdb_value representing SQLNULL. This must be destroyed with `duckdb_destroy_value`.
+	*/
+	create_null_value :: proc() -> Value ---
+
+	/*!
+	Returns the number of elements in a LIST value.
+	
+	* @param value The LIST value.
+	* @return The number of elements in the list.
+	*/
+	get_list_size :: proc(value: Value) -> Idx_T ---
+
+	/*!
+	Returns the LIST child at index as a duckdb_value.
+	
+	* @param value The LIST value.
+	* @param index The index of the child.
+	* @return The child as a duckdb_value.
+	*/
+	get_list_child :: proc(value: Value, index: Idx_T) -> Value ---
+
+	/*!
+	Creates an enum value from a type and a value. Must be destroyed with `duckdb_destroy_value`.
+	
+	* @param type The type of the enum
+	* @param value The value for the enum
+	* @return The enum value, or nullptr.
+	*/
+	create_enum_value :: proc(type: Logical_Type, value: u64) -> Value ---
+
+	/*!
+	Returns the enum value of the given value.
+	
+	* @param value A duckdb_value containing an enum
+	* @return A uint64_t, or MinValue<uint64> if the value cannot be converted
+	*/
+	get_enum_value :: proc(value: Value) -> u64 ---
+
+	/*!
+	Returns the STRUCT child at index as a duckdb_value.
+	
+	* @param value The STRUCT value.
+	* @param index The index of the child.
+	* @return The child as a duckdb_value.
+	*/
+	get_struct_child :: proc(value: Value, index: Idx_T) -> Value ---
+
+	/*!
+	Returns the SQL string representation of the given value.
+	
+	* @param value A duckdb_value.
+	* @return The SQL string representation as a null-terminated string. The result must be freed with `duckdb_free`.
+	*/
+	value_to_string :: proc(value: Value) -> cstring ---
 
 	/*!
 	Creates a `duckdb_logical_type` from a primitive type.
@@ -2617,6 +3470,22 @@ foreign lib {
 	data_chunk_set_size :: proc(chunk: Data_Chunk, size: Idx_T) ---
 
 	/*!
+	Creates a flat vector. Must be destroyed with `duckdb_destroy_vector`.
+	
+	* @param type The logical type of the vector.
+	* @param capacity The capacity of the vector.
+	* @return The vector.
+	*/
+	create_vector :: proc(type: Logical_Type, capacity: Idx_T) -> Vector ---
+
+	/*!
+	Destroys the vector and de-allocates its memory.
+	
+	* @param vector A pointer to the vector.
+	*/
+	destroy_vector :: proc(vector: ^Vector) ---
+
+	/*!
 	Retrieves the column type of the specified vector.
 	
 	The result must be destroyed with `duckdb_destroy_logical_type`.
@@ -2663,14 +3532,17 @@ foreign lib {
 	Ensures the validity mask is writable by allocating it.
 	
 	After this function is called, `duckdb_vector_get_validity` will ALWAYS return non-NULL.
-	This allows null values to be written to the vector, regardless of whether a validity mask was present before.
+	This allows NULL values to be written to the vector, regardless of whether a validity mask was present before.
 	
 	* @param vector The vector to alter
 	*/
 	vector_ensure_validity_writable :: proc(vector: Vector) ---
 
 	/*!
-	Assigns a string element in the vector at the specified location.
+	Assigns a string element in the vector at the specified location. For VARCHAR vectors, the input is validated as UTF-8;
+	if invalid, a NULL value is assigned at that index.
+	
+	Superseded by `duckdb_unsafe_vector_assign_string_element_len`, optionally combined with `duckdb_valid_utf8_check`.
 	
 	* @param vector The vector to alter
 	* @param index The row position in the vector to assign the string to
@@ -2679,7 +3551,10 @@ foreign lib {
 	vector_assign_string_element :: proc(vector: Vector, index: Idx_T, str: cstring) ---
 
 	/*!
-	Assigns a string element in the vector at the specified location. You may also use this function to assign BLOBs.
+	Assigns a string element in the vector at the specified location. For VARCHAR vectors, the input is validated as UTF-8;
+	if invalid, a NULL value is assigned at that index. For BLOB vectors, no validation is performed.
+	
+	Superseded by `duckdb_unsafe_vector_assign_string_element_len`, optionally combined with `duckdb_valid_utf8_check`.
 	
 	* @param vector The vector to alter
 	* @param index The row position in the vector to assign the string to
@@ -2687,6 +3562,19 @@ foreign lib {
 	* @param str_len The length of the string (in bytes)
 	*/
 	vector_assign_string_element_len :: proc(vector: Vector, index: Idx_T, str: cstring, str_len: Idx_T) ---
+
+	/*!
+	Assigns a string element in the vector at the specified location without UTF-8 validation. The caller is responsible for
+	ensuring the input is valid UTF-8. Use `duckdb_valid_utf8_check` to validate strings before calling this function if
+	needed. If the input is known to be valid UTF-8, this function can be called directly for better performance, avoiding
+	the overhead of redundant validation.
+	
+	* @param vector The vector to alter
+	* @param index The row position in the vector to assign the string to
+	* @param str The string
+	* @param str_len The length of the string (in bytes)
+	*/
+	unsafe_vector_assign_string_element_len :: proc(vector: Vector, index: Idx_T, str: cstring, str_len: Idx_T) ---
 
 	/*!
 	Retrieves the child vector of a list vector.
@@ -2707,29 +3595,31 @@ foreign lib {
 	list_vector_get_size :: proc(vector: Vector) -> Idx_T ---
 
 	/*!
-	Sets the total size of the underlying child-vector of a list vector.
+	Sets the size of the underlying child-vector of a list vector.
+	Note that this does NOT reserve the memory in the child buffer,
+	and that it is possible to set a size exceeding the capacity.
+	To set the capacity, use `duckdb_list_vector_reserve`.
 	
 	* @param vector The list vector.
 	* @param size The size of the child list.
-	* @return The duckdb state. Returns DuckDBError if the vector is nullptr.
+	* @return The duckdb state. Returns DuckDBError, if the vector is nullptr.
 	*/
 	list_vector_set_size :: proc(vector: Vector, size: Idx_T) -> State ---
 
 	/*!
-	Sets the total capacity of the underlying child-vector of a list.
-	
-	After calling this method, you must call `duckdb_vector_get_validity` and `duckdb_vector_get_data` to obtain current
-	data and validity pointers
+	Sets the capacity of the underlying child-vector of a list vector.
+	We increment to the next power of two, based on the required capacity.
+	Thus, the capacity might not match the size of the list (capacity >= size),
+	which is set via `duckdb_list_vector_set_size`.
 	
 	* @param vector The list vector.
-	* @param required_capacity the total capacity to reserve.
-	* @return The duckdb state. Returns DuckDBError if the vector is nullptr.
+	* @param required_capacity The child buffer capacity to reserve.
+	* @return The duckdb state. Returns DuckDBError, if the vector is nullptr.
 	*/
 	list_vector_reserve :: proc(vector: Vector, required_capacity: Idx_T) -> State ---
 
 	/*!
 	Retrieves the child vector of a struct vector.
-	
 	The resulting vector is valid as long as the parent vector is valid.
 	
 	* @param vector The vector
@@ -2739,8 +3629,7 @@ foreign lib {
 	struct_vector_get_child :: proc(vector: Vector, index: Idx_T) -> Vector ---
 
 	/*!
-	Retrieves the child vector of a array vector.
-	
+	Retrieves the child vector of an array vector.
 	The resulting vector is valid as long as the parent vector is valid.
 	The resulting vector has the size of the parent vector multiplied by the array size.
 	
@@ -2748,6 +3637,48 @@ foreign lib {
 	* @return The child vector
 	*/
 	array_vector_get_child :: proc(vector: Vector) -> Vector ---
+
+	/*!
+	Slice a vector with a selection vector.
+	The length of the selection vector must be less than or equal to the length of the vector.
+	Turns the vector into a dictionary vector.
+	
+	* @param vector The vector to slice.
+	* @param sel The selection vector.
+	* @param len The length of the selection vector.
+	*/
+	slice_vector :: proc(vector: Vector, sel: Selection_Vector, len: Idx_T) ---
+
+	/*!
+	Copy the src vector to the dst with a selection vector that identifies which indices to copy.
+	
+	* @param src The vector to copy from.
+	* @param dst The vector to copy to.
+	* @param sel The selection vector. The length of the selection vector should not be more than the length of the src
+	vector
+	* @param src_count The number of entries from selection vector to copy. Think of this as the effective length of the
+	selection vector starting from index 0
+	* @param src_offset The offset in the selection vector to copy from (important: actual number of items copied =
+	src_count - src_offset).
+	* @param dst_offset The offset in the dst vector to start copying to.
+	*/
+	vector_copy_sel :: proc(src: Vector, dst: Vector, sel: Selection_Vector, src_count: Idx_T, src_offset: Idx_T, dst_offset: Idx_T) ---
+
+	/*!
+	Copies the value from `value` to `vector`.
+	
+	* @param vector The receiving vector.
+	* @param value The value to copy into the vector.
+	*/
+	vector_reference_value :: proc(vector: Vector, value: Value) ---
+
+	/*!
+	Changes `to_vector` to reference `from_vector. After, the vectors share ownership of the data.
+	
+	* @param to_vector The receiving vector.
+	* @param from_vector The vector to reference.
+	*/
+	vector_reference_vector :: proc(to_vector: Vector, from_vector: Vector) ---
 
 	/*!
 	Returns whether or not a row is valid (i.e. not NULL) in the given validity mask.
@@ -2793,7 +3724,7 @@ foreign lib {
 	/*!
 	Creates a new empty scalar function.
 	
-	The return value should be destroyed with `duckdb_destroy_scalar_function`.
+	The return value must be destroyed with `duckdb_destroy_scalar_function`.
 	
 	* @return The scalar function object.
 	*/
@@ -2825,8 +3756,7 @@ foreign lib {
 	scalar_function_set_varargs :: proc(scalar_function: Scalar_Function, type: Logical_Type) ---
 
 	/*!
-	Sets the parameters of the given scalar function to varargs. Does not require adding parameters with
-	duckdb_scalar_function_add_parameter.
+	Sets the scalar function's null-handling behavior to special.
 	
 	* @param scalar_function The scalar function.
 	*/
@@ -2861,9 +3791,44 @@ foreign lib {
 	
 	* @param scalar_function The scalar function
 	* @param extra_info The extra information
-	* @param destroy The callback that will be called to destroy the bind data (if any)
+	* @param destroy The callback that will be called to destroy the extra information (if any)
 	*/
 	scalar_function_set_extra_info :: proc(scalar_function: Scalar_Function, extra_info: rawptr, destroy: Delete_Callback_T) ---
+
+	/*!
+	Sets the (optional) bind function of the scalar function.
+	
+	* @param scalar_function The scalar function.
+	* @param bind The bind function.
+	*/
+	scalar_function_set_bind :: proc(scalar_function: Scalar_Function, bind: Scalar_Function_Bind_T) ---
+
+	/*!
+	Sets the user-provided bind data in the bind object of the scalar function.
+	The bind data object can be retrieved again during execution.
+	In most case, you also need to set the copy-callback of your bind data via duckdb_scalar_function_set_bind_data_copy.
+	
+	* @param info The bind info of the scalar function.
+	* @param bind_data The bind data object.
+	* @param destroy The callback to destroy the bind data (if any).
+	*/
+	scalar_function_set_bind_data :: proc(info: Bind_Info, bind_data: rawptr, destroy: Delete_Callback_T) ---
+
+	/*!
+	Sets the copy-callback for the user-provided bind data in the bind object of the scalar function.
+	
+	* @param info The bind info of the scalar function.
+	* @param copy The callback to copy the bind data (if any).
+	*/
+	scalar_function_set_bind_data_copy :: proc(info: Bind_Info, copy: Copy_Callback_T) ---
+
+	/*!
+	Report that an error has occurred while calling bind on a scalar function.
+	
+	* @param info The bind info object.
+	* @param error The error message.
+	*/
+	scalar_function_bind_set_error :: proc(info: Bind_Info, error: cstring) ---
 
 	/*!
 	Sets the main function of the scalar function.
@@ -2895,6 +3860,31 @@ foreign lib {
 	scalar_function_get_extra_info :: proc(info: Function_Info) -> rawptr ---
 
 	/*!
+	Retrieves the extra info of the function as set in the bind info.
+	
+	* @param info The info object.
+	* @return The extra info.
+	*/
+	scalar_function_bind_get_extra_info :: proc(info: Bind_Info) -> rawptr ---
+
+	/*!
+	Gets the scalar function's bind data set by `duckdb_scalar_function_set_bind_data`.
+	Note that the bind data is read-only.
+	
+	* @param info The function info.
+	* @return The bind data object.
+	*/
+	scalar_function_get_bind_data :: proc(info: Function_Info) -> rawptr ---
+
+	/*!
+	Retrieves the client context of the bind info of a scalar function.
+	
+	* @param info The bind info object of the scalar function.
+	* @param out_context The client context of the bind info. Must be destroyed with `duckdb_destroy_client_context`.
+	*/
+	scalar_function_get_client_context :: proc(info: Bind_Info, out_context: ^Client_Context) ---
+
+	/*!
 	Report that an error has occurred while executing the scalar function.
 	
 	* @param info The info object.
@@ -2905,7 +3895,7 @@ foreign lib {
 	/*!
 	Creates a new empty scalar function set.
 	
-	The return value should be destroyed with `duckdb_destroy_scalar_function_set`.
+	The return value must be destroyed with `duckdb_destroy_scalar_function_set`.
 	
 	* @return The scalar function set object.
 	*/
@@ -2939,6 +3929,105 @@ foreign lib {
 	* @return Whether or not the registration was successful.
 	*/
 	register_scalar_function_set :: proc(con: Connection, set: Scalar_Function_Set) -> State ---
+
+	/*!
+	Returns the number of input arguments of the scalar function.
+	
+	* @param info The bind info.
+	* @return The number of input arguments.
+	*/
+	scalar_function_bind_get_argument_count :: proc(info: Bind_Info) -> Idx_T ---
+
+	/*!
+	Returns the input argument at index of the scalar function.
+	
+	* @param info The bind info.
+	* @param index The argument index.
+	* @return The input argument at index. Must be destroyed with `duckdb_destroy_expression`.
+	*/
+	scalar_function_bind_get_argument :: proc(info: Bind_Info, index: Idx_T) -> Expression ---
+
+	/*!
+	Retrieves the state pointer of the function info.
+	
+	* @param info The function info object.
+	* @return The state pointer.
+	*/
+	scalar_function_get_state :: proc(info: Function_Info) -> rawptr ---
+
+	/*!
+	Sets the (optional) state init function of the scalar function.
+	This is called once for each worker thread that begins executing the function
+	* @param scalar_function The scalar function.
+	* @param init The init function.
+	*/
+	scalar_function_set_init :: proc(scalar_function: Scalar_Function, init: Scalar_Function_Init_T) ---
+
+	/*!
+	Report that an error has occurred while calling init on a scalar function.
+	
+	* @param info The init info object.
+	* @param error The error message.
+	*/
+	scalar_function_init_set_error :: proc(info: Init_Info, error: cstring) ---
+
+	/*!
+	Sets the state pointer in the init info of the scalar function.
+	
+	* @param info The init info object.
+	* @param state The state pointer.
+	* @param destroy The callback to destroy the state (if any).
+	*/
+	scalar_function_init_set_state :: proc(info: Init_Info, state: rawptr, destroy: Delete_Callback_T) ---
+
+	/*!
+	Retrieves the client context of the init info of a scalar function.
+	
+	* @param info The init info object of the scalar function.
+	* @param out_context The client context of the init info. Must be destroyed with `duckdb_destroy_client_context`.
+	*/
+	scalar_function_init_get_client_context :: proc(info: Init_Info, out_context: ^Client_Context) ---
+
+	/*!
+	Gets the scalar function's bind data set by `duckdb_scalar_function_set_bind_data`.
+	Note that the bind data is read-only.
+	
+	* @param info The init info object.
+	* @return The bind data object.
+	*/
+	scalar_function_init_get_bind_data :: proc(info: Init_Info) -> rawptr ---
+
+	/*!
+	Retrieves the extra info of the function as set in the init info.
+	
+	* @param info The init info object.
+	* @return The extra info.
+	*/
+	scalar_function_init_get_extra_info :: proc(info: Init_Info) -> rawptr ---
+
+	/*!
+	Creates a new selection vector of size `size`.
+	Must be destroyed with `duckdb_destroy_selection_vector`.
+	
+	* @param size The size of the selection vector.
+	* @return The selection vector.
+	*/
+	create_selection_vector :: proc(size: Idx_T) -> Selection_Vector ---
+
+	/*!
+	Destroys the selection vector and de-allocates its memory.
+	
+	* @param sel The selection vector.
+	*/
+	destroy_selection_vector :: proc(sel: Selection_Vector) ---
+
+	/*!
+	Access the data pointer of a selection vector.
+	
+	* @param sel The selection vector.
+	* @return The data pointer.
+	*/
+	selection_vector_get_data_ptr :: proc(sel: Selection_Vector) -> ^Sel_T ---
 
 	/*!
 	Creates a new empty aggregate function.
@@ -3023,7 +4112,7 @@ foreign lib {
 	
 	* @param aggregate_function The aggregate function
 	* @param extra_info The extra information
-	* @param destroy The callback that will be called to destroy the bind data (if any)
+	* @param destroy The callback that will be called to destroy the extra information (if any)
 	*/
 	aggregate_function_set_extra_info :: proc(aggregate_function: Aggregate_Function, extra_info: rawptr, destroy: Delete_Callback_T) ---
 
@@ -3127,7 +4216,7 @@ foreign lib {
 	
 	* @param table_function The table function
 	* @param extra_info The extra information
-	* @param destroy The callback that will be called to destroy the bind data (if any)
+	* @param destroy The callback that will be called to destroy the extra information (if any)
 	*/
 	table_function_set_extra_info :: proc(table_function: Table_Function, extra_info: rawptr, destroy: Delete_Callback_T) ---
 
@@ -3197,6 +4286,14 @@ foreign lib {
 	bind_get_extra_info :: proc(info: Bind_Info) -> rawptr ---
 
 	/*!
+	Retrieves the client context of the bind info of a table function.
+	
+	* @param info The bind info object of the table function.
+	* @param out_context The client context of the bind info. Must be destroyed with `duckdb_destroy_client_context`.
+	*/
+	table_function_get_client_context :: proc(info: Bind_Info, out_context: ^Client_Context) ---
+
+	/*!
 	Adds a result column to the output of the table function.
 	
 	* @param info The table function's bind info.
@@ -3236,11 +4333,12 @@ foreign lib {
 	bind_get_named_parameter :: proc(info: Bind_Info, name: cstring) -> Value ---
 
 	/*!
-	Sets the user-provided bind data in the bind object. This object can be retrieved again during execution.
+	Sets the user-provided bind data in the bind object of the table function.
+	This object can be retrieved again during execution.
 	
-	* @param info The info object
+	* @param info The bind info of the table function.
 	* @param bind_data The bind data object.
-	* @param destroy The callback that will be called to destroy the bind data (if any)
+	* @param destroy The callback to destroy the bind data (if any).
 	*/
 	bind_set_bind_data :: proc(info: Bind_Info, bind_data: rawptr, destroy: Delete_Callback_T) ---
 
@@ -3253,7 +4351,7 @@ foreign lib {
 	bind_set_cardinality :: proc(info: Bind_Info, cardinality: Idx_T, is_exact: bool) ---
 
 	/*!
-	Report that an error has occurred while calling bind.
+	Report that an error has occurred while calling bind on a table function.
 	
 	* @param info The info object
 	* @param error The error message
@@ -3334,13 +4432,13 @@ foreign lib {
 	function_get_extra_info :: proc(info: Function_Info) -> rawptr ---
 
 	/*!
-	Gets the bind data set by `duckdb_bind_set_bind_data` during the bind.
+	Gets the table function's bind data set by `duckdb_bind_set_bind_data`.
 	
-	Note that the bind data should be considered as read-only.
+	Note that the bind data is read-only.
 	For tracking state, use the init data instead.
 	
-	* @param info The info object
-	* @return The bind data object
+	* @param info The function info object.
+	* @return The bind data object.
 	*/
 	function_get_bind_data :: proc(info: Function_Info) -> rawptr ---
 
@@ -3448,8 +4546,6 @@ foreign lib {
 	*/
 	profiling_info_get_child :: proc(info: Profiling_Info, index: Idx_T) -> Profiling_Info ---
 
-	// Note that `duckdb_appender_destroy` should always be called on the resulting appender, even if the function returns
-	// `DuckDBError`.
 	/*!
 	Creates an appender object.
 	
@@ -3464,26 +4560,61 @@ foreign lib {
 	appender_create :: proc(connection: Connection, schema: cstring, table: cstring, out_appender: ^Appender) -> State ---
 
 	/*!
-	Returns the number of columns in the table that belongs to the appender.
+	Creates an appender object.
+	
+	Note that the object must be destroyed with `duckdb_appender_destroy`.
+	
+	* @param connection The connection context to create the appender in.
+	* @param catalog The catalog of the table to append to, or `nullptr` for the default catalog.
+	* @param schema The schema of the table to append to, or `nullptr` for the default schema.
+	* @param table The table name to append to.
+	* @param out_appender The resulting appender object.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
+	*/
+	appender_create_ext :: proc(connection: Connection, catalog: cstring, schema: cstring, table: cstring, out_appender: ^Appender) -> State ---
+
+	/*!
+	Creates an appender object that executes the given query with any data appended to it.
+	
+	Note that the object must be destroyed with `duckdb_appender_destroy`.
+	
+	* @param connection The connection context to create the appender in.
+	* @param query The query to execute, can be an INSERT, DELETE, UPDATE or MERGE INTO statement.
+	* @param column_count The number of columns to append.
+	* @param types The types of the columns to append.
+	* @param table_name (optionally) the table name used to refer to the appended data, defaults to "appended_data".
+	* @param column_names (optionally) the list of column names, defaults to "col1", "col2", ...
+	* @param out_appender The resulting appender object.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
+	*/
+	appender_create_query :: proc(connection: Connection, query: cstring, column_count: Idx_T, types: ^Logical_Type, table_name: cstring, column_names: ^cstring, out_appender: ^Appender) -> State ---
+
+	/*!
+	Returns the number of columns that belong to the appender.
+	If there is no active column list, then this equals the table's physical columns.
 	
 	* @param appender The appender to get the column count from.
-	* @return The number of columns in the table.
+	* @return The number of columns in the data chunks.
 	*/
 	appender_column_count :: proc(appender: Appender) -> Idx_T ---
 
 	/*!
-	Returns the type of the column at the specified index.
+	Returns the type of the column at the specified index. This is either a type in the active column list, or the same type
+	as a column in the receiving table.
 	
-	Note: The resulting type should be destroyed with `duckdb_destroy_logical_type`.
+	Note: The resulting type must be destroyed with `duckdb_destroy_logical_type`.
 	
 	* @param appender The appender to get the column type from.
 	* @param col_idx The index of the column to get the type of.
-	* @return The duckdb_logical_type of the column.
+	* @return The `duckdb_logical_type` of the column.
 	*/
 	appender_column_type :: proc(appender: Appender, col_idx: Idx_T) -> Logical_Type ---
 
 	/*!
-	Returns the error message associated with the given appender.
+	**DEPRECATION NOTICE**: This method is scheduled for removal in a future release.
+	Use duckdb_appender_error_data instead.
+	
+	Returns the error message associated with the appender.
 	If the appender has no error message, this returns `nullptr` instead.
 	
 	The error message should not be freed. It will be de-allocated when `duckdb_appender_destroy` is called.
@@ -3494,9 +4625,18 @@ foreign lib {
 	appender_error :: proc(appender: Appender) -> cstring ---
 
 	/*!
+	Returns the error data associated with the appender.
+	Must be destroyed with duckdb_destroy_error_data.
+	
+	* @param appender The appender to get the error data from.
+	* @return The error data.
+	*/
+	appender_error_data :: proc(appender: Appender) -> Error_Data ---
+
+	/*!
 	Flush the appender to the table, forcing the cache of the appender to be cleared. If flushing the data triggers a
 	constraint violation or any other error, then all data is invalidated, and this function returns DuckDBError.
-	It is not possible to append more values. Call duckdb_appender_error to obtain the error message followed by
+	It is not possible to append more values. Call duckdb_appender_error_data to obtain the error data followed by
 	duckdb_appender_destroy to destroy the invalidated appender.
 	
 	* @param appender The appender to flush.
@@ -3505,9 +4645,18 @@ foreign lib {
 	appender_flush :: proc(appender: Appender) -> State ---
 
 	/*!
+	Clears all buffered data from the appender without flushing it to the table. This discards any data that has been
+	appended but not yet written. The appender can continue to be used after clearing.
+	
+	* @param appender The appender to clear.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
+	*/
+	appender_clear :: proc(appender: Appender) -> State ---
+
+	/*!
 	Closes the appender by flushing all intermediate states and closing it for further appends. If flushing the data
 	triggers a constraint violation or any other error, then all data is invalidated, and this function returns DuckDBError.
-	Call duckdb_appender_error to obtain the error message followed by duckdb_appender_destroy to destroy the invalidated
+	Call duckdb_appender_error_data to obtain the error data followed by duckdb_appender_destroy to destroy the invalidated
 	appender.
 	
 	* @param appender The appender to flush and close.
@@ -3528,6 +4677,26 @@ foreign lib {
 	appender_destroy :: proc(appender: ^Appender) -> State ---
 
 	/*!
+	Appends a column to the active column list of the appender. Immediately flushes all previous data.
+	
+	The active column list specifies all columns that are expected when flushing the data. Any non-active columns are filled
+	with their default values, or NULL.
+	
+	* @param appender The appender to add the column to.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
+	*/
+	appender_add_column :: proc(appender: Appender, name: cstring) -> State ---
+
+	/*!
+	Removes all columns from the active column list of the appender, resetting the appender to treat all columns as active.
+	Immediately flushes all previous data.
+	
+	* @param appender The appender to clear the columns from.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
+	*/
+	appender_clear_columns :: proc(appender: Appender) -> State ---
+
+	/*!
 	A nop function, provided for backwards compatibility reasons. Does nothing. Only `duckdb_appender_end_row` is required.
 	*/
 	appender_begin_row :: proc(appender: Appender) -> State ---
@@ -3544,6 +4713,19 @@ foreign lib {
 	Append a DEFAULT value (NULL if DEFAULT not available for column) to the appender.
 	*/
 	append_default :: proc(appender: Appender) -> State ---
+
+	/*!
+	Append a DEFAULT value, at the specified row and column, (NULL if DEFAULT not available for column) to the chunk created
+	from the specified appender. The default value of the column must be a constant value. Non-deterministic expressions
+	like nextval('seq') or random() are not supported.
+	
+	* @param appender The appender to get the default value from.
+	* @param chunk The data chunk to append the default value to.
+	* @param col The chunk column index to append the default value to.
+	* @param row The chunk row index to append the default value to.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
+	*/
+	append_default_to_chunk :: proc(appender: Appender, chunk: Data_Chunk, col: Idx_T, row: Idx_T) -> State ---
 
 	/*!
 	Append a bool value to the appender.
@@ -3651,15 +4833,17 @@ foreign lib {
 	append_null :: proc(appender: Appender) -> State ---
 
 	/*!
+	Append a duckdb_value to the appender.
+	*/
+	append_value :: proc(appender: Appender, value: Value) -> State ---
+
+	/*!
 	Appends a pre-filled data chunk to the specified appender.
-	
-	The types of the data chunk must exactly match the types of the table, no casting is performed.
-	If the types do not match or the appender is in an invalid state, DuckDBError is returned.
-	If the append is successful, DuckDBSuccess is returned.
+	Attempts casting, if the data chunk types do not match the active appender types.
 	
 	* @param appender The appender to append to.
 	* @param chunk The data chunk to append.
-	* @return The return state.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
 	*/
 	append_data_chunk :: proc(appender: Appender, chunk: Data_Chunk) -> State ---
 
@@ -3674,6 +4858,19 @@ foreign lib {
 	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
 	*/
 	table_description_create :: proc(connection: Connection, schema: cstring, table: cstring, out: ^Table_Description) -> State ---
+
+	/*!
+	Creates a table description object. Note that `duckdb_table_description_destroy` must be called on the resulting
+	table_description, even if the function returns `DuckDBError`.
+	
+	* @param connection The connection context.
+	* @param catalog The catalog (database) name of the table, or `nullptr` for the default catalog.
+	* @param schema The schema of the table, or `nullptr` for the default schema.
+	* @param table The table name.
+	* @param out The resulting table description object.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
+	*/
+	table_description_create_ext :: proc(connection: Connection, catalog: cstring, schema: cstring, table: cstring, out: ^Table_Description) -> State ---
 
 	/*!
 	Destroy the TableDescription object.
@@ -3701,6 +4898,87 @@ foreign lib {
 	* @return `DuckDBSuccess` on success or `DuckDBError` on failure.
 	*/
 	column_has_default :: proc(table_description: Table_Description, index: Idx_T, out: ^bool) -> State ---
+
+	/*!
+	Return the number of columns of the described table.
+	
+	* @param table_description The table_description to query.
+	* @return The column count.
+	*/
+	table_description_get_column_count :: proc(table_description: Table_Description) -> Idx_T ---
+
+	/*!
+	Obtain the column name at 'index'.
+	The out result must be destroyed with `duckdb_free`.
+	
+	* @param table_description The table_description to query.
+	* @param index The index of the column to query.
+	* @return The column name.
+	*/
+	table_description_get_column_name :: proc(table_description: Table_Description, index: Idx_T) -> cstring ---
+
+	/*!
+	Obtain the column type at 'index'.
+	The return value must be destroyed with `duckdb_destroy_logical_type`.
+	
+	* @param table_description The table_description to query.
+	* @param index The index of the column to query.
+	* @return The column type.
+	*/
+	table_description_get_column_type :: proc(table_description: Table_Description, index: Idx_T) -> Logical_Type ---
+
+	/*!
+	Transforms a DuckDB Schema into an Arrow Schema
+	
+	* @param arrow_options The Arrow settings used to produce arrow.
+	* @param types The DuckDB logical types for each column in the schema.
+	* @param names The names for each column in the schema.
+	* @param column_count The number of columns that exist in the schema.
+	* @param out_schema The resulting arrow schema. Must be destroyed with `out_schema->release(out_schema)`.
+	* @return The error data. Must be destroyed with `duckdb_destroy_error_data`.
+	*/
+	to_arrow_schema :: proc(arrow_options: Arrow_Options, types: ^Logical_Type, names: ^cstring, column_count: Idx_T, out_schema: ^ArrowSchema) -> Error_Data ---
+
+	/*!
+	Transforms a DuckDB data chunk into an Arrow array.
+	
+	* @param arrow_options The Arrow settings used to produce arrow.
+	* @param chunk The DuckDB data chunk to convert.
+	* @param out_arrow_array The output Arrow structure that will hold the converted data. Must be released with
+	`out_arrow_array->release(out_arrow_array)`
+	* @return The error data. Must be destroyed with `duckdb_destroy_error_data`.
+	*/
+	data_chunk_to_arrow :: proc(arrow_options: Arrow_Options, chunk: Data_Chunk, out_arrow_array: ^ArrowArray) -> Error_Data ---
+
+	/*!
+	Transforms an Arrow Schema into a DuckDB Schema.
+	
+	* @param connection The connection to get the transformation settings from.
+	* @param schema The input Arrow schema. Must be released with `schema->release(schema)`.
+	* @param out_types The Arrow converted schema with extra information about the arrow types. Must be destroyed with
+	`duckdb_destroy_arrow_converted_schema`.
+	* @return The error data. Must be destroyed with `duckdb_destroy_error_data`.
+	*/
+	schema_from_arrow :: proc(connection: Connection, schema: ^ArrowSchema, out_types: ^Arrow_Converted_Schema) -> Error_Data ---
+
+	/*!
+	Transforms an Arrow array into a DuckDB data chunk. The data chunk will retain ownership of the underlying Arrow data.
+	
+	* @param connection The connection to get the transformation settings from.
+	* @param arrow_array The input Arrow array. Data ownership is passed on to DuckDB's DataChunk, the underlying object
+	does not need to be released and won't have ownership of the data.
+	* @param converted_schema The Arrow converted schema with extra information about the arrow types.
+	* @param out_chunk The resulting DuckDB data chunk. Must be destroyed by duckdb_destroy_data_chunk.
+	* @return The error data. Must be destroyed with `duckdb_destroy_error_data`.
+	*/
+	data_chunk_from_arrow :: proc(connection: Connection, arrow_array: ^ArrowArray, converted_schema: Arrow_Converted_Schema, out_chunk: ^Data_Chunk) -> Error_Data ---
+
+	/*!
+	Destroys the arrow converted schema and de-allocates all memory allocated for that arrow converted schema.
+	
+	* @param arrow_converted_schema The arrow converted schema to destroy.
+	*/
+	destroy_arrow_converted_schema :: proc(arrow_converted_schema: ^Arrow_Converted_Schema) ---
 
 	/*!
 	**DEPRECATION NOTICE**: This method is scheduled for removal in a future release.
@@ -4076,5 +5354,705 @@ foreign lib {
 	* @param cast_function The cast function object.
 	*/
 	destroy_cast_function :: proc(cast_function: ^Cast_Function) ---
+
+	/*!
+	Destroys the expression and de-allocates its memory.
+	
+	* @param expr A pointer to the expression.
+	*/
+	destroy_expression :: proc(expr: ^Expression) ---
+
+	/*!
+	Returns the return type of an expression.
+	
+	* @param expr The expression.
+	* @return The return type. Must be destroyed with `duckdb_destroy_logical_type`.
+	*/
+	expression_return_type :: proc(expr: Expression) -> Logical_Type ---
+
+	/*!
+	Returns whether the expression is foldable into a value or not.
+	
+	* @param expr The expression.
+	* @return True, if the expression is foldable, else false.
+	*/
+	expression_is_foldable :: proc(expr: Expression) -> bool ---
+
+	/*!
+	Folds an expression creating a folded value.
+	
+	* @param context The client context.
+	* @param expr The expression. Must be foldable.
+	* @param out_value The folded value, if folding was successful. Must be destroyed with `duckdb_destroy_value`.
+	* @return The error data. Must be destroyed with `duckdb_destroy_error_data`.
+	*/
+	expression_fold :: proc(_context: Client_Context, expr: Expression, out_value: ^Value) -> Error_Data ---
+
+	/*!
+	Get a file system instance associated with the given client context.
+	
+	* @param context The client context.
+	* @return The resulting file system instance. Must be destroyed with `duckdb_destroy_file_system`.
+	*/
+	client_context_get_file_system :: proc(_context: Client_Context) -> File_System ---
+
+	/*!
+	Destroys the given file system instance.
+	* @param file_system The file system instance to destroy.
+	*/
+	destroy_file_system :: proc(file_system: ^File_System) ---
+
+	/*!
+	Retrieves the last error that occurred on the given file system instance.
+	
+	* @param file_system The file system instance.
+	* @return The error data.
+	*/
+	file_system_error_data :: proc(file_system: File_System) -> Error_Data ---
+
+	/*!
+	Opens a file at the given path with the specified options.
+	
+	* @param file_system The file system instance.
+	* @param path The path to the file.
+	* @param options The file open options specifying how to open the file.
+	* @param out_file The resulting file handle instance, or `nullptr` if the open failed. Must be destroyed with
+	`duckdb_destroy_file_handle`.
+	* @return Whether the operation was successful. If not, the error data can be retrieved using
+	`duckdb_file_system_error_data`.
+	*/
+	file_system_open :: proc(file_system: File_System, path: cstring, options: File_Open_Options, out_file: ^File_Handle) -> State ---
+
+	/*!
+	Creates a new file open options instance with blank settings.
+	
+	* @return The new file open options instance. Must be destroyed with `duckdb_destroy_file_open_options`.
+	*/
+	create_file_open_options :: proc() -> File_Open_Options ---
+
+	/*!
+	Sets a specific flag in the file open options.
+	
+	* @param options The file open options instance.
+	* @param flag The flag to set (e.g., read, write).
+	* @param value If the flag is enabled or disabled.
+	* @return `DuckDBSuccess` on success or `DuckDBError` if the flag is unrecognized or unsupported by this version of
+	DuckDB.
+	*/
+	file_open_options_set_flag :: proc(options: File_Open_Options, flag: File_Flag, value: bool) -> State ---
+
+	/*!
+	Destroys the given file open options instance.
+	* @param options The file open options instance to destroy.
+	*/
+	destroy_file_open_options :: proc(options: ^File_Open_Options) ---
+
+	/*!
+	Destroys the given file handle and deallocates all associated resources.
+	This will also close the file if it is still open.
+	
+	* @param file_handle The file handle to destroy.
+	*/
+	destroy_file_handle :: proc(file_handle: ^File_Handle) ---
+
+	/*!
+	Retrieves the last error that occurred on the given file handle.
+	
+	* @param file_handle The file handle.
+	* @return The error data. Must be destroyed with `duckdb_destroy_error_data`
+	*/
+	file_handle_error_data :: proc(file_handle: File_Handle) -> Error_Data ---
+
+	/*!
+	Reads data from the file into the buffer.
+	
+	* @param file_handle The file handle to read from.
+	* @param buffer The buffer to read data into.
+	* @param size The number of bytes to read.
+	* @return The number of bytes actually read, or negative on error.
+	*/
+	file_handle_read :: proc(file_handle: File_Handle, buffer: rawptr, size: i64) -> i64 ---
+
+	/*!
+	Writes data from the buffer to the file.
+	
+	* @param file_handle The file handle to write to.
+	* @param buffer The buffer containing data to write.
+	* @param size The number of bytes to write.
+	* @return The number of bytes actually written, or negative on error.
+	*/
+	file_handle_write :: proc(file_handle: File_Handle, buffer: rawptr, size: i64) -> i64 ---
+
+	/*!
+	Tells the current position in the file.
+	
+	* @param file_handle The file handle to tell the position of.
+	* @return The current position in the file, or negative on error.
+	*/
+	file_handle_tell :: proc(file_handle: File_Handle) -> i64 ---
+
+	/*!
+	Gets the size of the file.
+	
+	* @param file_handle The file handle to get the size of.
+	* @return The size of the file in bytes, or negative on error.
+	*/
+	file_handle_size :: proc(file_handle: File_Handle) -> i64 ---
+
+	/*!
+	Seeks to a specific position in the file.
+	
+	* @param file_handle The file handle to seek in.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure. If unsuccessful, the error data can be retrieved using
+	`duckdb_file_handle_error_data`.
+	*/
+	file_handle_seek :: proc(file_handle: File_Handle, position: i64) -> State ---
+
+	/*!
+	Synchronizes the file's state with the underlying storage.
+	
+	* @param file_handle The file handle to synchronize.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure. If unsuccessful, the error data can be retrieved using
+	`duckdb_file_handle_error_data`.
+	*/
+	file_handle_sync :: proc(file_handle: File_Handle) -> State ---
+
+	/*!
+	Closes the given file handle.
+	
+	* @param file_handle The file handle to close.
+	* @return `DuckDBSuccess` on success or `DuckDBError` on failure. If unsuccessful, the error data can be retrieved using
+	`duckdb_file_handle_error_data`.
+	*/
+	file_handle_close :: proc(file_handle: File_Handle) -> State ---
+
+	/*!
+	Creates a configuration option instance.
+	
+	* @return The resulting configuration option instance. Must be destroyed with `duckdb_destroy_config_option`.
+	*/
+	create_config_option :: proc() -> Config_Option ---
+
+	/*!
+	Destroys the given configuration option instance.
+	* @param option The configuration option instance to destroy.
+	*/
+	destroy_config_option :: proc(option: ^Config_Option) ---
+
+	/*!
+	Sets the name of the configuration option.
+	
+	* @param option The configuration option instance.
+	* @param name The name to set.
+	*/
+	config_option_set_name :: proc(option: Config_Option, name: cstring) ---
+
+	/*!
+	Sets the type of the configuration option.
+	
+	* @param option The configuration option instance.
+	* @param type The type to set.
+	*/
+	config_option_set_type :: proc(option: Config_Option, type: Logical_Type) ---
+
+	/*!
+	Sets the default value of the configuration option.
+	If the type of this option has already been set with `duckdb_config_option_set_type`, the value is cast to the type.
+	Otherwise, the type is inferred from the value.
+	
+	* @param option The configuration option instance.
+	* @param default_value The default value to set.
+	*/
+	config_option_set_default_value :: proc(option: Config_Option, default_value: Value) ---
+
+	/*!
+	Sets the default scope of the configuration option.
+	If not set, this defaults to `DUCKDB_CONFIG_OPTION_SCOPE_SESSION`.
+	
+	* @param option The configuration option instance.
+	* @param default_scope The default scope to set.
+	*/
+	config_option_set_default_scope :: proc(option: Config_Option, default_scope: Config_Option_Scope) ---
+
+	/*!
+	Sets the description of the configuration option.
+	
+	* @param option The configuration option instance.
+	* @param description The description to set.
+	*/
+	config_option_set_description :: proc(option: Config_Option, description: cstring) ---
+
+	/*!
+	Registers the given configuration option on the specified connection.
+	
+	* @param connection The connection to register the option on.
+	* @param option The configuration option instance to register.
+	* @return A duckdb_state indicating success or failure.
+	*/
+	register_config_option :: proc(connection: Connection, option: Config_Option) -> State ---
+
+	/*!
+	Retrieves the value of a configuration option by name from the given client context.
+	
+	* @param context The client context.
+	* @param name The name of the configuration option to retrieve.
+	* @param out_scope Output parameter to optionally store the scope that the configuration option was retrieved from.
+	If this is `nullptr`, the scope is not returned.
+	If the requested option does not exist the scope is set to `DUCKDB_CONFIG_OPTION_SCOPE_INVALID`.
+	* @return The value of the configuration option. Returns `nullptr` if the option does not exist.
+	*/
+	client_context_get_config_option :: proc(_context: Client_Context, name: cstring, out_scope: ^Config_Option_Scope) -> Value ---
+
+	/*!
+	Creates a new empty copy function.
+	
+	The return value must be destroyed with `duckdb_destroy_copy_function`.
+	
+	* @return The copy function object.
+	*/
+	create_copy_function :: proc() -> Copy_Function ---
+
+	/*!
+	Sets the name of the copy function.
+	
+	* @param copy_function The copy function
+	* @param name The name to set
+	*/
+	copy_function_set_name :: proc(copy_function: Copy_Function, name: cstring) ---
+
+	/*!
+	Sets the extra info pointer of the copy function, which can be used to store arbitrary data.
+	
+	* @param copy_function The copy function
+	* @param extra_info The extra info pointer
+	* @param destructor  A destructor function to call to destroy the extra info
+	*/
+	copy_function_set_extra_info :: proc(copy_function: Copy_Function, extra_info: rawptr, destructor: Delete_Callback_T) ---
+
+	/*!
+	Registers the given copy function on the database connection under the specified name.
+	
+	* @param connection The database connection
+	* @param copy_function The copy function to register
+	*/
+	register_copy_function :: proc(connection: Connection, copy_function: Copy_Function) -> State ---
+
+	/*!
+	Destroys the given copy function object.
+	* @param copy_function The copy function to destroy.
+	*/
+	destroy_copy_function :: proc(copy_function: ^Copy_Function) ---
+
+	/*!
+	Sets the bind function of the copy function, to use when binding `COPY ... TO`.
+	
+	* @param bind The bind function
+	*/
+	copy_function_set_bind :: proc(copy_function: Copy_Function, bind: Copy_Function_Bind_T) ---
+
+	/*!
+	Report that an error occurred during the binding-phase of a `COPY ... TO` function.
+	
+	* @param info The bind info provided to the bind function
+	* @param error The error message
+	*/
+	copy_function_bind_set_error :: proc(info: Copy_Function_Bind_Info, error: cstring) ---
+
+	/*!
+	Retrieves the extra info pointer of the copy function.
+	
+	* @param info The bind info provided to the bind function
+	* @return The extra info pointer.
+	*/
+	copy_function_bind_get_extra_info :: proc(info: Copy_Function_Bind_Info) -> rawptr ---
+
+	/*!
+	Retrieves the client context of the current connection binding the `COPY ... TO` function.
+	
+	Must be destroyed with `duckdb_destroy_client_context`
+	
+	* @param info The bind info provided to the bind function
+	* @return The client context.
+	*/
+	copy_function_bind_get_client_context :: proc(info: Copy_Function_Bind_Info) -> Client_Context ---
+
+	/*!
+	Retrieves the number of columns that will be provided to the `COPY ... TO` function.
+	
+	* @param info The bind info provided to the bind function
+	* @return The number of columns.
+	*/
+	copy_function_bind_get_column_count :: proc(info: Copy_Function_Bind_Info) -> Idx_T ---
+
+	/*!
+	Retrieves the type of a column that will be provided to the `COPY ... TO` function.
+	
+	* @param info The bind info provided to the bind function
+	* @param col_idx The index of the column to retrieve the type for
+	* @return The type of the column. Must be destroyed with `duckdb_destroy_logical_type`.
+	*/
+	copy_function_bind_get_column_type :: proc(info: Copy_Function_Bind_Info, col_idx: Idx_T) -> Logical_Type ---
+
+	/*!
+	Retrieves all values for the given options provided to the `COPY ... TO` function.
+	
+	* @param info The bind info provided to the bind function
+	* @return A STRUCT value containing all options as fields. Must be destroyed with `duckdb_destroy_value`.
+	*/
+	copy_function_bind_get_options :: proc(info: Copy_Function_Bind_Info) -> Value ---
+
+	/*!
+	Sets the bind data of the copy function, to be provided to the init, sink and finalize functions.
+	
+	* @param info The bind info provided to the bind function
+	* @param bind_data The bind data pointer
+	* @param destructor  A destructor function to call to destroy the bind data
+	*/
+	copy_function_bind_set_bind_data :: proc(info: Copy_Function_Bind_Info, bind_data: rawptr, destructor: Delete_Callback_T) ---
+
+	/*!
+	Sets the initialization function of the copy function, called right before executing `COPY ... TO`.
+	
+	* @param init The init function
+	*/
+	copy_function_set_global_init :: proc(copy_function: Copy_Function, init: Copy_Function_Global_Init_T) ---
+
+	/*!
+	Report that an error occurred during the initialization-phase of a `COPY ... TO` function.
+	
+	* @param info The init info provided to the init function
+	* @param error The error message
+	*/
+	copy_function_global_init_set_error :: proc(info: Copy_Function_Global_Init_Info, error: cstring) ---
+
+	/*!
+	Retrieves the extra info pointer of the copy function.
+	
+	* @param info The init info provided to the init function
+	* @return The extra info pointer.
+	*/
+	copy_function_global_init_get_extra_info :: proc(info: Copy_Function_Global_Init_Info) -> rawptr ---
+
+	/*!
+	Retrieves the client context of the current connection initializing the `COPY ... TO` function.
+	
+	Must be destroyed with `duckdb_destroy_client_context`
+	
+	* @param info The init info provided to the init function
+	* @return The client context.
+	*/
+	copy_function_global_init_get_client_context :: proc(info: Copy_Function_Global_Init_Info) -> Client_Context ---
+
+	/*!
+	Retrieves the bind data provided during the binding-phase of a `COPY ... TO` function.
+	
+	* @param info The init info provided to the init function
+	* @return The bind data pointer.
+	*/
+	copy_function_global_init_get_bind_data :: proc(info: Copy_Function_Global_Init_Info) -> rawptr ---
+
+	/*!
+	Retrieves the file path provided to the `COPY ... TO` function.
+	
+	Lives for the duration of the initialization callback, must not be destroyed.
+	
+	* @param info The init info provided to the init function
+	* @return The file path.
+	*/
+	copy_function_global_init_get_file_path :: proc(info: Copy_Function_Global_Init_Info) -> cstring ---
+
+	/*!
+	Sets the global state of the copy function, to be provided to all subsequent local init, sink and finalize functions.
+	
+	* @param info The init info provided to the init function
+	* @param global_state The global state pointer
+	* @param destructor  A destructor function to call to destroy the global state
+	*/
+	copy_function_global_init_set_global_state :: proc(info: Copy_Function_Global_Init_Info, global_state: rawptr, destructor: Delete_Callback_T) ---
+
+	/*!
+	Sets the sink function of the copy function, called during `COPY ... TO`.
+	
+	* @param function The sink function
+	*/
+	copy_function_set_sink :: proc(copy_function: Copy_Function, function: Copy_Function_Sink_T) ---
+
+	/*!
+	Report that an error occurred during the sink-phase of a `COPY ... TO` function.
+	
+	* @param info The sink info provided to the sink function
+	* @param error The error message
+	*/
+	copy_function_sink_set_error :: proc(info: Copy_Function_Sink_Info, error: cstring) ---
+
+	/*!
+	Retrieves the extra info pointer of the copy function.
+	
+	* @param info The sink info provided to the sink function
+	* @return The extra info pointer.
+	*/
+	copy_function_sink_get_extra_info :: proc(info: Copy_Function_Sink_Info) -> rawptr ---
+
+	/*!
+	Retrieves the client context of the current connection during the sink-phase of the `COPY ... TO` function.
+	
+	Must be destroyed with `duckdb_destroy_client_context`
+	
+	* @param info The sink info provided to the sink function
+	* @return The client context.
+	*/
+	copy_function_sink_get_client_context :: proc(info: Copy_Function_Sink_Info) -> Client_Context ---
+
+	/*!
+	Retrieves the bind data provided during the binding-phase of a `COPY ... TO` function.
+	
+	* @param info The sink info provided to the sink function
+	* @return The bind data pointer.
+	*/
+	copy_function_sink_get_bind_data :: proc(info: Copy_Function_Sink_Info) -> rawptr ---
+
+	/*!
+	Retrieves the global state provided during the init-phase of a `COPY ... TO` function.
+	
+	* @param info The sink info provided to the sink function
+	* @return The global state pointer.
+	*/
+	copy_function_sink_get_global_state :: proc(info: Copy_Function_Sink_Info) -> rawptr ---
+
+	/*!
+	Sets the finalize function of the copy function, called at the end of `COPY ... TO`.
+	
+	* @param finalize The finalize function
+	*/
+	copy_function_set_finalize :: proc(copy_function: Copy_Function, finalize: Copy_Function_Finalize_T) ---
+
+	/*!
+	Report that an error occurred during the finalize-phase of a `COPY ... TO` function
+	
+	* @param info The finalize info provided to the finalize function
+	* @param error The error message
+	*/
+	copy_function_finalize_set_error :: proc(info: Copy_Function_Finalize_Info, error: cstring) ---
+
+	/*!
+	Retrieves the extra info pointer of the copy function.
+	
+	* @param info The finalize info provided to the finalize function
+	* @return The extra info pointer.
+	*/
+	copy_function_finalize_get_extra_info :: proc(info: Copy_Function_Finalize_Info) -> rawptr ---
+
+	/*!
+	Retrieves the client context of the current connection during the finalize-phase of the `COPY ... TO` function.
+	
+	Must be destroyed with `duckdb_destroy_client_context`
+	
+	* @param info The finalize info provided to the finalize function
+	* @return The client context.
+	*/
+	copy_function_finalize_get_client_context :: proc(info: Copy_Function_Finalize_Info) -> Client_Context ---
+
+	/*!
+	Retrieves the bind data provided during the binding-phase of a `COPY ... TO` function.
+	
+	* @param info The finalize info provided to the finalize function
+	* @return The bind data pointer.
+	*/
+	copy_function_finalize_get_bind_data :: proc(info: Copy_Function_Finalize_Info) -> rawptr ---
+
+	/*!
+	Retrieves the global state provided during the init-phase of a `COPY ... TO` function.
+	
+	* @param info The finalize info provided to the finalize function
+	* @return The global state pointer.
+	*/
+	copy_function_finalize_get_global_state :: proc(info: Copy_Function_Finalize_Info) -> rawptr ---
+
+	/*!
+	Sets the table function to use when executing a `COPY ... FROM (...)` statement with this copy function.
+	
+	The table function must have a `duckdb_table_function_bind_t`, `duckdb_table_function_init_t` and
+	`duckdb_table_function_t` set.
+	
+	The table function must take a single VARCHAR parameter (the file path).
+	
+	Options passed to the `COPY ... FROM (...)` statement are forwarded as named parameters to the table function.
+	
+	Since `COPY ... FROM` copies into an already existing table, the table function should not define its own result columns
+	using `duckdb_bind_add_result_column` when binding . Instead use `duckdb_table_function_bind_get_result_column_count`
+	and related functions in the bind callback of the table function to retrieve the schema of the target table of the `COPY
+	... FROM` statement.
+	
+	* @param copy_function The copy function
+	* @param table_function The table function to use for `COPY ... FROM`
+	*/
+	copy_function_set_copy_from_function :: proc(copy_function: Copy_Function, table_function: Table_Function) ---
+
+	/*!
+	Retrieves the number of result columns of a table function.
+	
+	If the table function is used in a `COPY ... FROM` statement, this can be used to retrieve the number of columns in the
+	target table at the start of the bind callback.
+	
+	* @param info The bind info provided to the bind function
+	* @return The number of result columns.
+	*/
+	table_function_bind_get_result_column_count :: proc(info: Bind_Info) -> Idx_T ---
+
+	/*!
+	Retrieves the name of a result column of a table function.
+	
+	If the table function is used in a `COPY ... FROM` statement, this can be used to retrieve the names of the columns in
+	the target table at the start of the bind callback.
+	
+	The result is valid for the duration of the bind callback or until the next call to `duckdb_bind_add_result_column`, so
+	it must not be destroyed.
+	
+	* @param info The bind info provided to the bind function
+	* @param col_idx The index of the result column to retrieve the name for
+	* @return The name of the result column.
+	*/
+	table_function_bind_get_result_column_name :: proc(info: Bind_Info, col_idx: Idx_T) -> cstring ---
+
+	/*!
+	Retrieves the type of a result column of a table function.
+	
+	If the table function is used in a `COPY ... FROM` statement, this can be used to retrieve the types of the columns in
+	the target table at the start of the bind callback.
+	
+	The result must be destroyed with `duckdb_destroy_logical_type`.
+	
+	* @param info The bind info provided to the bind function
+	* @param col_idx The index of the result column to retrieve the type for
+	* @return The type of the result column.
+	*/
+	table_function_bind_get_result_column_type :: proc(info: Bind_Info, col_idx: Idx_T) -> Logical_Type ---
+
+	/*!
+	Retrieve a database catalog instance by name.
+	This function can only be called from within the context of an active transaction, e.g. during execution of a registered
+	function callback. Otherwise returns `nullptr`.
+	* @param context The client context.
+	* @param catalog_name The name of the catalog.
+	* @return The resulting catalog instance, or `nullptr` if called from outside an active transaction or if a catalog with
+	the specified name does not exist. Must be destroyed with `duckdb_destroy_catalog`
+	*/
+	client_context_get_catalog :: proc(_context: Client_Context, catalog_name: cstring) -> Catalog ---
+
+	/*!
+	Retrieve the "type name" of the given catalog.
+	E.g. for a DuckDB database, this returns 'duckdb'.
+	The returned string is owned by the catalog and remains valid until the catalog is destroyed.
+	
+	* @param catalog The catalog.
+	* @return The type name of the catalog.
+	*/
+	catalog_get_type_name :: proc(catalog: Catalog) -> cstring ---
+
+	/*!
+	Retrieve a catalog entry from the given catalog by type, schema name and entry name.
+	The returned catalog entry remains valid for the duration of the current transaction.
+	
+	* @param catalog The catalog.
+	* @param context The client context.
+	* @param entry_type The type of the catalog entry to retrieve.
+	* @param schema_name The schema name of the catalog entry.
+	* @param entry_name The name of the catalog entry.
+	* @return The resulting catalog entry, or `nullptr` if no such entry exists. Must be destroyed with
+	`duckdb_destroy_catalog_entry`. Remains valid for the duration of the current transaction.
+	*/
+	catalog_get_entry :: proc(catalog: Catalog, _context: Client_Context, entry_type: Catalog_Entry_Type, schema_name: cstring, entry_name: cstring) -> Catalog_Entry ---
+
+	/*!
+	Destroys the given catalog instance.
+	
+	Note that this does not actually "drop" the contents of the catalog; it merely frees the C API handle.
+	
+	* @param catalog The catalog instance to destroy.
+	*/
+	destroy_catalog :: proc(catalog: ^Catalog) ---
+
+	/*!
+	Get the type of the given catalog entry.
+	
+	* @param entry The catalog entry.
+	* @return The type of the catalog entry.
+	*/
+	catalog_entry_get_type :: proc(entry: Catalog_Entry) -> Catalog_Entry_Type ---
+
+	/*!
+	Get the name of the given catalog entry.
+	
+	* @param entry The catalog entry.
+	* @return The name of the catalog entry. The returned string is owned by the catalog entry and remains valid until the
+	catalog entry is destroyed.
+	*/
+	catalog_entry_get_name :: proc(entry: Catalog_Entry) -> cstring ---
+
+	/*!
+	Destroys the given catalog entry instance.
+	
+	Note that this does not actually "drop" the catalog entry from the database catalog; it merely frees the C API handle.
+	
+	* @param entry The catalog entry instance to destroy.
+	*/
+	destroy_catalog_entry :: proc(entry: ^Catalog_Entry) ---
+
+	/*!
+	Creates a new log storage object.
+	
+	* @return A log storage object. Must be destroyed with `duckdb_destroy_log_storage`.
+	*/
+	create_log_storage :: proc() -> Log_Storage ---
+
+	/*!
+	Destroys a log storage object.
+	
+	* @param log_storage The log storage object to destroy.
+	*/
+	destroy_log_storage :: proc(log_storage: ^Log_Storage) ---
+
+	/*!
+	Sets the callback function for writing log entries.
+	
+	* @param log_storage The log storage object.
+	* @param function The function to call.
+	*/
+	log_storage_set_write_log_entry :: proc(log_storage: Log_Storage, function: Logger_Write_Log_Entry_T) ---
+
+	/*!
+	Sets the extra data of the custom log storage.
+	
+	* @param log_storage The log storage object.
+	* @param extra_data The extra data that is passed back into the callbacks.
+	* @param delete_callback The delete callback to call on the extra data, if any.
+	*/
+	log_storage_set_extra_data :: proc(log_storage: Log_Storage, extra_data: rawptr, delete_callback: Delete_Callback_T) ---
+
+	/*!
+	Sets the name of the log storage.
+	
+	* @param log_storage The log storage object.
+	* @param name The name of the log storage.
+	*/
+	log_storage_set_name :: proc(log_storage: Log_Storage, name: cstring) ---
+
+	/*!
+	Registers a custom log storage for the logger.
+	
+	* @param database A database object.
+	* @param log_storage The log storage object.
+	* @return Whether the registration was successful.
+	*/
+	register_log_storage :: proc(database: Database, log_storage: Log_Storage) -> State ---
+
+	/*!
+	Gets the CRS (Coordinate Reference System) of a GEOMETRY type.
+	Result must be freed with `duckdb_free`.
+	
+	* @param type The GEOMETRY type.
+	* @return The CRS of the GEOMETRY type, or NULL if the type is not a GEOMETRY type.
+	*/
+	geometry_type_get_crs :: proc(type: Logical_Type) -> cstring ---
 }
 
