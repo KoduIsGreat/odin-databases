@@ -62,6 +62,7 @@ Builder :: struct {
 	where_count: int,
 	set_count:   int,
 	join_count:  int,
+	cte_count:   int,
 }
 
 // --- Descriptor types (typed layer) ---
@@ -130,6 +131,7 @@ init :: proc(b: ^Builder, allocator := context.allocator) {
 	b.where_count = 0
 	b.set_count = 0
 	b.join_count = 0
+	b.cte_count = 0
 }
 
 destroy :: proc(b: ^Builder) {
@@ -143,6 +145,7 @@ reset :: proc(b: ^Builder) {
 	b.where_count = 0
 	b.set_count = 0
 	b.join_count = 0
+	b.cte_count = 0
 }
 
 // --- Low-level procs ---
@@ -232,7 +235,11 @@ ge :: proc(c: Column($T), v: T, allocator := context.temp_allocator) -> Predicat
 	return _cmp(c.base, ">=", to_value(v), allocator)
 }
 
-like :: proc(c: Column(string), pattern: string, allocator := context.temp_allocator) -> Predicate {
+like :: proc(
+	c: Column(string),
+	pattern: string,
+	allocator := context.temp_allocator,
+) -> Predicate {
 	return _cmp(c.base, "LIKE", pattern, allocator)
 }
 
@@ -252,8 +259,21 @@ is_not_null :: proc(c: Column($T), allocator := context.temp_allocator) -> Predi
 // a string one. They take no parameters (nothing appended to args).
 
 @(private)
-_col_cmp :: proc(a: Column_Base, op: string, c: Column_Base, allocator: runtime.Allocator) -> Predicate {
-	sql_str := fmt.aprintf("%s.%s %s %s.%s", a.table, a.name, op, c.table, c.name, allocator = allocator)
+_col_cmp :: proc(
+	a: Column_Base,
+	op: string,
+	c: Column_Base,
+	allocator: runtime.Allocator,
+) -> Predicate {
+	sql_str := fmt.aprintf(
+		"%s.%s %s %s.%s",
+		a.table,
+		a.name,
+		op,
+		c.table,
+		c.name,
+		allocator = allocator,
+	)
 	return Predicate{sql = sql_str, args = {}}
 }
 
@@ -389,6 +409,62 @@ join :: proc(b: ^Builder, table: $T, on: Predicate, kind := Join_Kind.Inner) {
 		}
 	}
 	b.join_count += 1
+}
+
+// with prepends a Common Table Expression: `WITH <name> AS (<body>) `. The
+// CTE is named by a *table descriptor* — the same `{ _info: Table_Info, ... }`
+// shape `from`/`select`/`where_` already take — so the main query references
+// the CTE through the typed layer exactly like a real table. Declare the
+// descriptor with the CTE's name and its output columns (qualified by that
+// name); the columns are what the body's SELECT exposes:
+//
+//   Adults := struct {
+//       _info: Table_Info,
+//       id:    Column(i64),
+//       name:  Column(string),
+//   }{
+//       _info = {name = "adults"},
+//       id    = {base = {table = "adults", name = "id", type_id = i64}},
+//       name  = {base = {table = "adults", name = "name", type_id = string}},
+//   }
+//
+//   sub: Builder; init(&sub); defer destroy(&sub)
+//   select(&sub, Users.id, Users.name); from(&sub, Users); where_(&sub, ge(Users.age, 18))
+//   with(&b, Adults, &sub)
+//   select(&b, Adults.id, Adults.name); from(&b, Adults)
+//   // WITH adults AS (SELECT users.id, users.name FROM users WHERE users.age >= ?)
+//   //   SELECT adults.id, adults.name FROM adults
+//
+// The descriptor can be hand-written (as above) or generated: annotate a
+// struct with `//+sql:table <cte-name>` and schemagen's struct front-end emits
+// exactly this descriptor (see tools/schemagen).
+//
+// The body is built with its own Builder, so the CTE can use the full typed
+// layer; its SQL is inlined and its args appended here. Call `with` *before*
+// the main query so the CTE's parameters are recorded ahead of the main
+// query's — placeholders are positional, and the CTE's `?`s come first
+// textually.
+//
+// Successive calls share a single WITH keyword and are comma-joined. Pass
+// `recursive = true` on the first call for `WITH RECURSIVE` (the flag governs
+// the whole WITH clause, so it is ignored on later calls).
+with :: proc(b: ^Builder, cte: $T, sub: ^Builder, recursive := false) {
+	if b.cte_count == 0 {
+		strings.write_string(&b.buf, "WITH ")
+		if recursive {
+			strings.write_string(&b.buf, "RECURSIVE ")
+		}
+	} else {
+		strings.write_string(&b.buf, ", ")
+	}
+	strings.write_string(&b.buf, _table_name(cte))
+	strings.write_string(&b.buf, " AS (")
+	strings.write_string(&b.buf, strings.to_string(sub.buf))
+	strings.write_string(&b.buf, ") ")
+	b.cte_count += 1
+	for a in sub.args {
+		append(&b.args, a)
+	}
 }
 
 // where_ appends a predicate to the WHERE clause. Successive calls are joined

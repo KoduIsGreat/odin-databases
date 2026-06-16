@@ -5,15 +5,15 @@ import "core:testing"
 // --- Test fixtures: a hand-written stand-in for what schemagen emits. ---
 
 Users := struct {
-	_info:      Table_Info,
-	id:         Column(i64),
-	name:       Column(string),
-	age:        Column(int),
-}{
+	_info: Table_Info,
+	id:    Column(i64),
+	name:  Column(string),
+	age:   Column(int),
+} {
 	_info = {name = "users"},
-	id    = {base = {table = "users", name = "id", type_id = i64}},
-	name  = {base = {table = "users", name = "name", type_id = string}},
-	age   = {base = {table = "users", name = "age", type_id = int}},
+	id = {base = {table = "users", name = "id", type_id = i64}},
+	name = {base = {table = "users", name = "name", type_id = string}},
+	age = {base = {table = "users", name = "age", type_id = int}},
 }
 
 Posts := struct {
@@ -21,11 +21,11 @@ Posts := struct {
 	id:      Column(i64),
 	user_id: Column(i64),
 	title:   Column(string),
-}{
-	_info   = {name = "posts"},
-	id      = {base = {table = "posts", name = "id", type_id = i64}},
+} {
+	_info = {name = "posts"},
+	id = {base = {table = "posts", name = "id", type_id = i64}},
 	user_id = {base = {table = "posts", name = "user_id", type_id = i64}},
-	title   = {base = {table = "posts", name = "title", type_id = string}},
+	title = {base = {table = "posts", name = "title", type_id = string}},
 }
 
 // --- Typed layer ---
@@ -109,6 +109,71 @@ test_typed_insert :: proc(t: ^testing.T) {
 	q, args := to_query(&b)
 	testing.expect_value(t, q, "INSERT INTO users (name, age) VALUES (?, ?)")
 	testing.expect_value(t, len(args), 2)
+}
+
+@(test)
+test_typed_with :: proc(t: ^testing.T) {
+	b: Builder
+	init(&b)
+	defer destroy(&b)
+
+	// CTE descriptor: same shape as a table descriptor, qualified by the CTE
+	// name, with the columns the body's SELECT exposes.
+	Adults := struct {
+		_info: Table_Info,
+		id:    Column(i64),
+		name:  Column(string),
+	} {
+		_info = {name = "adults"},
+		id = {base = {table = "adults", name = "id", type_id = i64}},
+		name = {base = {table = "adults", name = "name", type_id = string}},
+	}
+
+	sub: Builder
+	init(&sub)
+	defer destroy(&sub)
+	select(&sub, Users.id, Users.name)
+	from(&sub, Users)
+	where_(&sub, ge(Users.age, 18))
+
+	with(&b, Adults, &sub)
+	select(&b, Adults.id, Adults.name)
+	from(&b, Adults)
+
+	q, args := to_query(&b)
+	testing.expect_value(
+		t,
+		q,
+		"WITH adults AS (SELECT users.id, users.name FROM users WHERE users.age >= ?) SELECT adults.id, adults.name FROM adults",
+	)
+	testing.expect_value(t, len(args), 1)
+}
+
+@(test)
+test_typed_with_recursive :: proc(t: ^testing.T) {
+	b: Builder
+	init(&b)
+	defer destroy(&b)
+
+	Cnt := struct {
+		_info: Table_Info,
+		n:     Column(i64),
+	} {
+		_info = {name = "cnt"},
+		n = {base = {table = "cnt", name = "n", type_id = i64}},
+	}
+
+	sub: Builder
+	init(&sub)
+	defer destroy(&sub)
+	raw_select(&sub, "1")
+
+	with(&b, Cnt, &sub, recursive = true)
+	select(&b, Cnt.n)
+	from(&b, Cnt)
+
+	q, _ := to_query(&b)
+	testing.expect_value(t, q, "WITH RECURSIVE cnt AS (SELECT 1) SELECT cnt.n FROM cnt")
 }
 
 @(test)
@@ -200,7 +265,11 @@ test_raw_select_with_where_and_order :: proc(t: ^testing.T) {
 	limit(&b, 10)
 
 	q, args := to_query(&b)
-	testing.expect_value(t, q, "SELECT id, name FROM users WHERE age >= ? AND name != ? ORDER BY name LIMIT 10")
+	testing.expect_value(
+		t,
+		q,
+		"SELECT id, name FROM users WHERE age >= ? AND name != ? ORDER BY name LIMIT 10",
+	)
 	testing.expect_value(t, len(args), 2)
 }
 

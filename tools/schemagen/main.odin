@@ -25,6 +25,23 @@
 //     `-define:SCHEMAGEN_DUCKDB=true`. Composite columns (LIST/STRUCT/MAP/...)
 //     have no single-field mapping and are skipped with a warning.
 //
+// CTE descriptors (struct front-end)
+//
+// A CTE isn't a real table, so DB introspection never sees it — but its
+// descriptor has the same shape as a table's, just qualified by the CTE name.
+// To get a typed descriptor for the `sqlbuilder.with` CTE layer, annotate a
+// struct describing the CTE's output columns with `//+sql:table <cte-name>`:
+//
+//   //+sql:table adults
+//   Adults_Row :: struct { id: i64, name: string }
+//
+// emits an `Adults` descriptor with `_info = {name = "adults"}` and columns
+// qualified by "adults" — pass it straight to `with`/`from`/`select`. The
+// struct front-end emits only the descriptor (no row struct), so the same
+// struct doubles as the descriptor source and your scan target for the CTE's
+// rows. No dedicated CTE annotation is needed: a CTE descriptor is a table
+// descriptor whose name happens to be a CTE.
+//
 // Nullability
 //
 // Nullable columns map to `Maybe(T)` struct fields and set `nullable = true`

@@ -223,10 +223,15 @@ build_columns :: proc(
 	cols := make([]drv.Column, col_count, allocator)
 	for i in 0 ..< col_count {
 		col := i32(i)
+		// type_id is best-effort metadata derived from the column's *declared*
+		// type via SQLite affinity rules. column_decltype returns nil for an
+		// expression column (e.g. COUNT(*), a literal) — those keep type_id = 0
+		// (unknown), since SQLite has no static type for them. Only the
+		// datetime case affects read_values; the rest is metadata for callers
+		// that inspect columns() (e.g. tools/querygen describe).
 		tid: typeid
-		decltype := sql3.column_decltype(stmt, col)
-		if decltype != nil && is_datetime_decltype(string(decltype)) {
-			tid = typeid_of(time.Time)
+		if decltype := sql3.column_decltype(stmt, col); decltype != nil {
+			tid = decltype_to_typeid(string(decltype))
 		}
 		cols[i] = drv.Column {
 			name     = string(sql3.column_name(stmt, col)),
@@ -235,6 +240,41 @@ build_columns :: proc(
 		}
 	}
 	return cols
+}
+
+// decltype_to_typeid maps a SQLite declared column type to the Odin typeid the
+// driver produces when scanning, via SQLite affinity rules + datetime
+// detection. It mirrors tools/schemagen's decltype_to_odin (which produces the
+// equivalent type *names* for codegen). A non-empty decltype always maps to
+// some type — NUMERIC / unrecognized affinities default to f64, matching the
+// scan layer, which coerces an integral i64 into a float destination.
+@(private)
+decltype_to_typeid :: proc(decltype: string) -> typeid {
+	if is_datetime_decltype(decltype) {return typeid_of(time.Time)}
+
+	up := strings.to_upper(decltype, context.temp_allocator)
+	switch {
+	// JSON has NUMERIC affinity but is stored/returned as TEXT (json1) or, for
+	// JSONB, as a BLOB. Handle it before the affinity rules.
+	case strings.contains(up, "JSONB"):
+		return typeid_of([]u8)
+	case strings.contains(up, "JSON"):
+		return typeid_of(string)
+	// BOOLEAN has NUMERIC affinity but is read as INTEGER 0/1; the scan layer
+	// coerces i64 → bool. Check before INT (BOOL contains no "INT").
+	case strings.contains(up, "BOOL"):
+		return typeid_of(bool)
+	case strings.contains(up, "INT"):
+		return typeid_of(i64)
+	case strings.contains(up, "CHAR"), strings.contains(up, "CLOB"), strings.contains(up, "TEXT"):
+		return typeid_of(string)
+	case strings.contains(up, "BLOB"):
+		return typeid_of([]u8)
+	case strings.contains(up, "REAL"), strings.contains(up, "FLOA"), strings.contains(up, "DOUB"):
+		return typeid_of(f64)
+	case:
+		return typeid_of(f64) // NUMERIC / unrecognized
+	}
 }
 
 // Check if a SQLite declared type name indicates a datetime column.

@@ -11,6 +11,7 @@
 // Commands:
 //   scan         <dir>                 generate row scanners            (scangen)
 //   schema       [flags] <dir>         generate typed descriptors       (schemagen)
+//   query        [flags] <src> <dst>   generate query procs from .sql   (querygen)
 //   migrate-new  <dir> <name>          scaffold a new migration pair    (migranew)
 //   migrate-gen  [flags] <src> <dst>   embed .sql migrations            (migragen)
 //   version                            print the odb version
@@ -21,6 +22,7 @@ import "core:os"
 
 import migragen "database:tools/migragen"
 import migranew "database:tools/migranew"
+import querygen "database:tools/querygen"
 import scangen "database:tools/scangen"
 import schemagen "database:tools/schemagen"
 
@@ -40,6 +42,8 @@ main :: proc() {
 		os.exit(scangen.run("odb scan", rest))
 	case "schema":
 		os.exit(schemagen.run("odb schema", rest))
+	case "query":
+		os.exit(querygen.run("odb query", rest))
 	case "migrate-gen", "migragen":
 		os.exit(migragen.run("odb migrate-gen", rest))
 	case "migrate-new", "migranew":
@@ -63,6 +67,7 @@ USAGE := []string {
 	"commands:",
 	"  scan         <dir>                generate row scanners (scangen)",
 	"  schema       [flags] <dir>        generate typed descriptors (schemagen)",
+	"  query        [flags] <src> <dst>  generate query procs from .sql (querygen)",
 	"  migrate-new  <dir> <name>         scaffold a new migration pair (migranew)",
 	"  migrate-gen  [flags] <src> <dst>  embed .sql migrations (migragen)",
 	"  version                           print the odb version",

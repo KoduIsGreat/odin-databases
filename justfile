@@ -56,6 +56,7 @@ check-all:
     odin check examples/quickstart {{coll}}
     odin check examples/query_builder {{coll}}
     odin check examples/introspection {{coll}}
+    odin check examples/queries {{coll}}
     odin check examples/ss {{coll}} -define:DATABASE_PG_TLS=true
     odin check examples/migrations {{coll}}
     odin check examples/duckdb {{coll}}
@@ -69,6 +70,8 @@ check-all:
     odin check tools/scangen {{coll}}
     odin check tools/schemagen {{coll}}
     odin check tools/schemagen {{coll}} -define:SCHEMAGEN_DUCKDB=true
+    odin check tools/querygen {{coll}}
+    odin check tools/querygen {{coll}} -define:QUERYGEN_DUCKDB=true
     odin check tools/migragen {{coll}}
     odin check tools/migranew {{coll}}
     odin check tools/odb {{coll}}
@@ -83,6 +86,7 @@ test:
     odin test drivers/duckdb {{coll}}
     odin test sqlbuilder {{coll}}
     odin test migrate {{coll}}
+    odin test tools/querygen {{coll}}
     odin test tools/migragen {{coll}}
     odin test tools/migranew {{coll}}
     odin test tests {{coll}}
@@ -243,8 +247,19 @@ gen-introspection:
     odin run tools/scangen {{coll}} -- examples/introspection
     rm -f "$db"
 
+# Regenerate the querygen example's queries.gen.odin by materializing a
+# throwaway SQLite DB from schema.sql and describing each query in sql/ against
+# it. Requires `sqlite3`.
+gen-queries:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    db="$(mktemp -u -t querygen.XXXXXX.db)"
+    sqlite3 "$db" < examples/queries/schema.sql
+    odin run tools/querygen {{coll}} -- -db="$db" examples/queries/sql examples/queries
+    rm -f "$db"
+
 # Regenerate every generated file in the repo.
-gen-all: gen gen-query-builder gen-introspection gen-migrations-example
+gen-all: gen gen-query-builder gen-introspection gen-queries gen-migrations-example
 
 # Show what scangen would touch without writing anything (useful for CI guards).
 scan-check dir=".":
