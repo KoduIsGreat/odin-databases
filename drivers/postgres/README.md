@@ -43,7 +43,7 @@ Recognized keys: `host`/`hostaddr`, `port`, `user`, `password`,
 
 ## Code generation
 
-Both generators work with this driver:
+All three generators work with this driver:
 
 - **scangen** is driver-agnostic — annotate a struct `//+sql:scan` and it emits
   a concrete `scan_<T>` (the postgres driver produces the same `Value` variants
@@ -59,6 +59,13 @@ Both generators work with this driver:
   skipped), maps each column's `udt_name` to the Odin type the driver scans, and
   marks `Maybe(T)` for nullable columns. Run `scangen` after to get concrete
   scanners for the generated structs.
+- **querygen** generates typed data-access procs from annotated `.sql` queries,
+  describing each query's result types against a live server. Use
+  `-driver=postgres` and `$N` placeholders:
+
+  ```sh
+  odb query -driver=postgres -db='postgres://user:pass@localhost:5432/mydb?sslmode=disable' ./sql ./myapp
+  ```
 
 ## TLS
 

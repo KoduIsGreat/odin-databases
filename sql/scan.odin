@@ -24,7 +24,7 @@ import "core:time"
 // Columns with no matching field are silently skipped.
 //
 // String and []byte values are cloned using context.allocator,
-// so they remain valid after close_rows(). The caller owns the memory.
+// so they remain valid after rows_close(). The caller owns the memory.
 // For detached rows (from query_row), values are already owned and
 // are moved directly without cloning.
 //
@@ -85,7 +85,7 @@ scan_struct :: proc(
 // The number of destinations must match the number of columns.
 //
 // String and []byte values are cloned using context.allocator,
-// so they remain valid after close_rows(). The caller owns the memory.
+// so they remain valid after rows_close(). The caller owns the memory.
 // For detached rows (from query_row), values are already owned and
 // are moved directly without cloning.
 //

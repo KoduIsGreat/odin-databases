@@ -99,7 +99,7 @@ stmt_query :: proc(stmt: ^Stmt, args: []Value, loc := #caller_location) -> (Rows
 		}, nil
 }
 
-// close_stmt finalizes the prepared statement.
+// stmt_close finalizes the prepared statement.
 // Does NOT return the connection to the pool — the caller manages that.
 stmt_close :: proc(stmt: ^Stmt) -> Error {
 	if stmt.closed {return nil}

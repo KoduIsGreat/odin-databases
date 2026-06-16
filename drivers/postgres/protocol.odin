@@ -86,11 +86,15 @@ send_all :: proc(conn: ^Pg_Conn, data: []byte) -> drv.Error {
 	for off < len(data) {
 		if conn.tls != nil {
 			n, ok := tls_write(conn, data[off:])
-			if !ok {return conn_errorf(conn, "postgres: TLS write failed%s", tls_error())}
+			if !ok {
+				return conn_errorf(conn, "postgres: TLS write failed%s", tls_error())
+			}
 			off += n
 		} else {
 			n, err := net.send_tcp(conn.socket, data[off:])
-			if err != nil {return conn_errorf(conn, "postgres: send failed: %v", err)}
+			if err != nil {
+				return conn_errorf(conn, "postgres: send failed: %v", err)
+			}
 			off += n
 		}
 	}
@@ -104,13 +108,21 @@ recv_exact :: proc(conn: ^Pg_Conn, buf: []byte) -> drv.Error {
 		if conn.tls != nil {
 			n, ok := tls_read(conn, buf[off:])
 			if !ok {
-				return conn_errorf(conn, "postgres: TLS read failed or connection closed%s", tls_error())
+				return conn_errorf(
+					conn,
+					"postgres: TLS read failed or connection closed%s",
+					tls_error(),
+				)
 			}
 			off += n
 		} else {
 			n, err := net.recv_tcp(conn.socket, buf[off:])
-			if err != nil {return conn_errorf(conn, "postgres: recv failed: %v", err)}
-			if n == 0 {return conn_errorf(conn, "postgres: connection closed by server")}
+			if err != nil {
+				return conn_errorf(conn, "postgres: recv failed: %v", err)
+			}
+			if n == 0 {
+				return conn_errorf(conn, "postgres: connection closed by server")
+			}
 			off += n
 		}
 	}
@@ -198,7 +210,7 @@ rd_cstr :: proc(r: ^Reader) -> string {
 	start := r.pos
 	for r.pos < len(r.data) && r.data[r.pos] != 0 {r.pos += 1}
 	s := string(r.data[start:r.pos])
-	if r.pos < len(r.data) {r.pos += 1} // skip NUL
+	if r.pos < len(r.data) {r.pos += 1} 	// skip NUL
 	return s
 }
 
@@ -349,7 +361,9 @@ build_sasl_response :: proc(buf: ^[dynamic]u8, data: []byte) {
 // stashing a "SEVERITY: message (SQLSTATE XXXXX)" string in conn.last_error.
 @(private)
 parse_error_response :: proc(conn: ^Pg_Conn, payload: []byte) -> drv.Error {
-	r := Reader{data = payload}
+	r := Reader {
+		data = payload,
+	}
 	severity, message, code: string
 	for {
 		field := rd_u8(&r)

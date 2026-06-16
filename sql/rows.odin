@@ -9,18 +9,18 @@ import "core:time"
 // then scan() to read column values.
 //
 // If created by a convenience db query, Rows owns the connection and
-// releases it on close_rows(). If created from an explicit Conn or Tx,
-// the caller manages the connection — close_rows() only closes the
+// releases it on rows_close(). If created from an explicit Conn or Tx,
+// the caller manages the connection — rows_close() only closes the
 // driver-level result set.
 //
 // next() buffers column values internally. These values are borrowed
 // from the driver and valid only until the next call to next() or
-// close_rows(). scan() clones string and []byte data using
+// rows_close(). scan() clones string and []byte data using
 // context.allocator so the scanned results outlive the Rows.
 //
 // Usage:
 //   rows := sql.query(db, "SELECT ...", args)
-//   defer sql.close_rows(&rows)
+//   defer sql.rows_close(&rows)
 //   for sql.next(&rows) {
 //       name: string; age: int
 //       sql.scan(&rows, &name, &age)         // positional
@@ -95,7 +95,7 @@ columns :: proc(rows: ^Rows) -> []Column {
 // After next returns true, use scan() to read column values.
 //
 // Values are BORROWED — valid only until the next call to next() or
-// close_rows().
+// rows_close().
 next :: proc(rows: ^Rows) -> bool {
 	if rows.closed {return false}
 	if rows._values == nil {
@@ -130,7 +130,7 @@ rows_err :: proc(rows: ^Rows) -> Error {
 	return rows.err
 }
 
-// close_rows closes the result set. If the Rows owns a connection
+// rows_close closes the result set. If the Rows owns a connection
 // (from a convenience db query), it is returned to the pool. Safe to
 // call multiple times.
 rows_close :: proc(rows: ^Rows) -> Error {
@@ -186,7 +186,7 @@ rows_close :: proc(rows: ^Rows) -> Error {
 detach_rows :: proc(rows: ^Rows) -> Error {
 	if rows.closed {return nil}
 	// Clone borrowed data before close — the driver frees it on rows_close.
-	// Column names are cloned with rows.allocator and freed by close_rows;
+	// Column names are cloned with rows.allocator and freed by rows_close;
 	// string/[]byte values are cloned with context.allocator so scan() can
 	// move them into caller-owned memory (the caller frees them, exactly as
 	// with a normal scan off a live Rows).
@@ -209,9 +209,9 @@ detach_rows :: proc(rows: ^Rows) -> Error {
 	// has_row and _values are intentionally preserved for the later scan.
 	//
 	// Release the driver result and connection now, then clear handle/db so
-	// the eventual close_rows() frees the buffered values/columns exactly once
+	// the eventual rows_close() frees the buffered values/columns exactly once
 	// without re-closing the result or re-releasing the connection. (We do NOT
-	// set rows.closed here — close_rows must still run to free the buffers.)
+	// set rows.closed here — rows_close must still run to free the buffers.)
 	err := rows.driver.rows_close(rows.handle)
 	rows.handle = nil
 	if rows.db != nil {

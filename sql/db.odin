@@ -197,7 +197,7 @@ db_exec :: proc(
 }
 
 // Convenience query — the returned Rows owns the connection and
-// releases it back to the pool on close_rows().
+// releases it back to the pool on rows_close().
 @(private)
 db_query :: proc(
 	db: ^DB,

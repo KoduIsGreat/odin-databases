@@ -1,8 +1,8 @@
 # odin-databases — Design Notes
 
 A database access toolkit for Odin: a driver-agnostic `sql` core, a typed SQL
-builder, and code generators that turn your schema into typed query descriptors
-and row scanners.
+builder, and code generators that turn your schema (or your `.sql` queries) into
+typed query descriptors, row scanners, and data-access procedures.
 
 ## Imports — the `database` collection
 
@@ -27,9 +27,9 @@ then `import "database:sql"`.
 sql/                  — package sql (DB, Conn, Rows, Row, Stmt, Tx, scan)
   db.odin             — DB (pool + API), open/close, overload sets, pool internals
   conn.odin           — Conn, checkout, checkin
-  rows.odin           — Rows, next, columns, rows_err, close_rows, codegen accessors
+  rows.odin           — Rows, next, columns, rows_err, rows_close, codegen accessors
   query_row.odin      — Row, query_row, close_row (error-safe)
-  stmt.odin           — Stmt, prepare, stmt_exec, stmt_query, close_stmt
+  stmt.odin           — Stmt, prepare, stmt_exec, stmt_query, stmt_close
   tx.odin             — Tx, begin, commit, rollback (closes conn on error)
   scan.odin           — Generic struct + positional scanning via runtime type info
   types.odin/driver.odin — re-exports of the driver-contract types
@@ -42,11 +42,14 @@ migrate/
 drivers/
   sqlite/             — sql.Driver implementation for SQLite (+ loadable extensions)
   postgres/           — pure-Odin sql.Driver for PostgreSQL (v3 wire protocol)
+  duckdb/             — preliminary sql.Driver for DuckDB (over its C API)
   mock/               — expectation-based mock driver for tests
 tools/
   scangen/            — generates concrete row scanners from //+sql:scan structs
   schemagen/          — generates typed column descriptors (+ structs) from
                         //+sql:table structs or a live database
+  querygen/           — generates typed data-access procs from annotated .sql,
+                        with result types described against a live database
   migragen/           — embeds a directory of .sql migrations into a generated
                         []migrate.Migration (an embedded front-end for migrate)
 examples/             — runnable, focused examples (see examples/README.md)
@@ -61,8 +64,9 @@ The project is three cooperating layers:
    `Column`, `Tx_Options`) that driver authors implement.
 2. **`sqlbuilder`** (`database:sqlbuilder`) — a typed SQL builder driven by
    generated column descriptors, with a raw string escape hatch.
-3. **`tools/`** — the code generators (`scangen`, `schemagen`) that connect a
-   schema (your structs or a live DB) to layers 1 and 2.
+3. **`tools/`** — the code generators (`scangen`, `schemagen`, `querygen`) that
+   connect a schema (your structs, a live DB, or annotated `.sql` queries) to
+   layers 1 and 2.
 
 Drivers fill in a `Driver` struct of procedure pointers. The sql package only
 sees opaque handles (`Conn_Handle`, `Stmt_Handle`, etc., all `distinct rawptr`).
@@ -91,7 +95,7 @@ statement cache:
 conn := sql.checkout(db)
 defer sql.checkin(&conn)
 stmt := sql.prepare(&conn, "SELECT ...")
-defer sql.close_stmt(&stmt)
+defer sql.stmt_close(&stmt)
 ```
 
 The `Stmt` is always bound to a specific `Conn`, so the user sees exactly which
@@ -107,7 +111,7 @@ and releases it; if nil, the caller manages the connection.
 
 | Created via | `db` field | Releases conn? |
 |---|---|---|
-| `sql.query(db, ...)` | non-nil | yes, on `close_rows` |
+| `sql.query(db, ...)` | non-nil | yes, on `rows_close` |
 | `sql.query(&conn, ...)` | nil | no |
 | `sql.query(&tx, ...)` | nil | no |
 | `sql.begin(db)` | non-nil | yes, on `commit`/`rollback` |
@@ -121,7 +125,7 @@ Owning objects also store the connection's `created_at` and pass it back to
 
 Values read from rows (`string`, `[]byte` in the `Value` union) point into
 driver-owned memory. They are valid only until the next `next()` call or
-`close_rows()`. If you need to keep data, copy explicitly — or use `scan()`,
+`rows_close()`. If you need to keep data, copy explicitly — or use `scan()`,
 which clones string and `[]byte` data using `context.allocator`.
 
 This matches what underlying C libraries actually do (SQLite's
@@ -148,9 +152,9 @@ driver stashes the error on its rows handle (`pg_rows.err` / `sqlite_rows.err`);
 `next()` captures it into `Rows.err` the moment iteration stops, and nothing ever
 clears it. The driver contract is one extra vtable proc, `rows_err(handle) ->
 Error` — nil-guarded in `next()`, so a driver that doesn't implement it (e.g.
-`mock`) simply reports "no error". As a backstop, `close_rows()` returns
+`mock`) simply reports "no error". As a backstop, `rows_close()` returns
 `Rows.err` in preference to any close error, so even a caller that only
-`defer`s `close_rows` and checks its return won't silently drop a truncated read.
+`defer`s `rows_close` and checks its return won't silently drop a truncated read.
 
 The error *message* is borrowed under the same rules as row values (postgres
 `conn.last_error`, SQLite `errmsg` — valid until the next op on that connection),
@@ -243,7 +247,7 @@ passed at `open` time. All internal allocations flow through it:
 
 - `DB` struct and pool free-list: `db.allocator`
 - Driver `open` receives the allocator for Odin-side wrapper structs
-- Column-name + row-buffer slices on `Rows`: `db.allocator` (freed on `close_rows`)
+- Column-name + row-buffer slices on `Rows`: `db.allocator` (freed on `rows_close`)
 - C libraries manage their own memory separately (malloc/free)
 
 `scan()` clones strings and `[]byte` into `context.allocator` at the call site,
@@ -442,6 +446,18 @@ yields a homogeneous `Binding`. `insert_into(&b, Users, bind(Users.name, n),
 bind(Users.age, a))` then emits the full `INSERT INTO users (name, age) VALUES
 (?, ?)`.
 
+### CTEs reuse the table descriptor
+
+`with(&b, Cte, &sub)` prepends a `WITH <name> AS (<body>)` clause. The body is
+built with its own `Builder`, so a CTE can use the full typed layer; its SQL is
+inlined and its args spliced ahead of the main query's (placeholders are
+positional, and a CTE's parameters come first textually — so `with` must be
+called before the rest of the query). The CTE is *named* by an ordinary table
+descriptor (the same `{ _info: Table_Info, ... }` shape `from`/`select` take),
+so the main query references the CTE through the typed layer exactly like a real
+table — and `schemagen`'s struct front-end can emit that descriptor from a
+`//+sql:table <cte-name>` struct. `WITH RECURSIVE` is a flag on the first call.
+
 ### What the type system can't do
 
 Odin can't compute a result-row type from a dynamic column selection (no
@@ -452,8 +468,9 @@ still assembled dynamically at runtime.
 
 ## Key Decisions — code generation
 
-Two single-responsibility generators share the idea of reading a schema and
-emitting Odin source. They compose: run `schemagen` then `scangen`.
+Three single-responsibility generators share the idea of reading a schema and
+emitting Odin source. `schemagen` and `scangen` compose (run `schemagen` then
+`scangen`); `querygen` is the query-first alternative.
 
 ### scangen — concrete row scanners
 
@@ -535,6 +552,51 @@ into a `Maybe(T)` field as `None`.
 
 Generated row structs are tagged `//+sql:scan`, so running `scangen` after
 `schemagen` produces concrete scanners for them.
+
+### querygen — typed data-access from `.sql` queries
+
+`querygen` is the query-first path (sqlc-style): annotated `.sql` files in, a
+typed proc + result struct per query out. A `-- name: <Name> :one|:many|:exec`
+header names the proc and its cardinality; `-- arg:` lines name the placeholders
+in order.
+
+The defining decision is **how result types are determined: by describing the
+query against a real database, not by parsing SQL.** querygen runs each
+`:one`/`:many` query with zero-valued arguments and reads the driver's result
+column metadata — `rows_columns(rows) -> []Column{name, type_id}`, the same
+metadata the runtime already exposes. The database resolves `SELECT *`, joins,
+and expressions, so there is no SQL parser to write or keep correct across
+dialects. This rides entirely on existing API (`begin`/`query`/`columns`/
+`rollback`), and is uniform across drivers: SQLite populates `type_id` via
+decltype affinity, PostgreSQL via result OID, DuckDB via logical type. (Enabling
+this is why the SQLite driver's `build_columns` derives a `type_id` from each
+column's declared type, not just for datetime columns.)
+
+Consequences of the describe approach:
+
+- **Parameter types are declared, not inferred.** SQLite cannot report a
+  prepared statement's parameter types statically, and describe-by-execution
+  needs values to bind anyway — so `-- arg:` carries each parameter's Odin type.
+  Keeping it declared across all drivers means one annotation format regardless
+  of target (a future enhancement could infer them on PostgreSQL/DuckDB via a
+  prepared-statement `Describe`).
+- **Placeholders follow the driver dialect** — `?` for SQLite/DuckDB, `$N` for
+  PostgreSQL — selected by `-driver`. A tiny string/comment-aware lexer counts
+  them and validates against the `-- arg:` count; it is the only "parser" in the
+  tool, and it never interprets SQL.
+- **Describe runs inside a rolled-back transaction**, so a query mis-annotated
+  as `:one`/`:many` but actually mutating (e.g. `INSERT ... RETURNING`) cannot
+  change the database at generation time. `:exec` queries are never run.
+- The emitted procs are **driver-agnostic** (`^sql.DB` + `sql.query`/`exec`/
+  `query_row`); only the embedded SQL's placeholder syntax is dialect-specific.
+
+Like the other generators, querygen slots into the committed-`*.gen.odin` story
+and is exposed as `odb query`. DuckDB describe links libduckdb, so it is opt-in
+at build time (`-define:QUERYGEN_DUCKDB=true`), exactly as schemagen gates its
+DuckDB front-end. Current limitations: one statement per query, and result
+columns map to their base Odin type (no `Maybe(T)` for nullable columns, since
+SQLite's describe can't report nullability); an expression column with no static
+type on SQLite (e.g. `COUNT(*)`) is an error directing you to alias/CAST it.
 
 ## Key Decisions — migrate
 
