@@ -51,7 +51,7 @@ import "core:sync"
 import "core:time"
 
 import ddb "database:bindings/duckdb/duckdb"
-import drv "database:sql/driver"
+import drv "database:driver"
 
 // --- Driver vtable (public) ---
 

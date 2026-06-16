@@ -50,7 +50,7 @@ check:
 check-all:
     odin check . {{coll}}
     odin check sql -no-entry-point {{coll}}
-    odin check sql/driver -no-entry-point {{coll}}
+    odin check driver -no-entry-point {{coll}}
     odin check sqlbuilder -no-entry-point {{coll}}
     odin check migrate -no-entry-point {{coll}}
     odin check examples/quickstart {{coll}}

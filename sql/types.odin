@@ -1,9 +1,9 @@
 package sql
 
-// Re-exports of the driver-contract value/error types. See `database:sql/driver`
+// Re-exports of the driver-contract value/error types. See `database:driver`
 // for definitions and rationale.
 
-import drv "./driver"
+import drv "database:driver"
 
 Value :: drv.Value
 Null :: drv.Null

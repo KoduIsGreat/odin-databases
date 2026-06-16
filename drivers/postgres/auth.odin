@@ -8,7 +8,7 @@ import "core:encoding/base64"
 import "core:strconv"
 import "core:strings"
 
-import drv "database:sql/driver"
+import drv "database:driver"
 
 // pg_authenticate runs the startup + authentication handshake to the point
 // where the server reports ReadyForQuery. Supports AuthenticationOk (trust),

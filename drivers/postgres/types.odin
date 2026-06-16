@@ -5,7 +5,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
-import drv "database:sql/driver"
+import drv "database:driver"
 
 // --- PostgreSQL type OIDs ---
 //

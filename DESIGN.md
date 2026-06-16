@@ -12,7 +12,7 @@ everything imports with rooted paths — no `../..`:
 
 ```odin
 import sql    "database:sql"
-import drv    "database:sql/driver"
+import drv    "database:driver"
 import sb     "database:sqlbuilder"
 import sqlite "database:drivers/sqlite"
 import mock   "database:drivers/mock"
@@ -59,7 +59,7 @@ bindings/sqlite/      — generated Odin bindings + static lib for SQLite
 The project is three cooperating layers:
 
 1. **`sql`** (`database:sql`) — the user-facing API (`DB`, `Conn`, `Rows`,
-   `Row`, `Stmt`, `Tx`, `scan`) plus **`sql/driver`** (`database:sql/driver`),
+   `Row`, `Stmt`, `Tx`, `scan`) plus **`driver`** (`database:driver`),
    the vtable struct (`Driver`) and shared types (`Value`, `Error`, `Result`,
    `Column`, `Tx_Options`) that driver authors implement.
 2. **`sqlbuilder`** (`database:sqlbuilder`) — a typed SQL builder driven by

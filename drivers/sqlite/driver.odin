@@ -5,7 +5,7 @@ import "core:mem"
 import "core:strings"
 import "core:time"
 
-import drv "database:sql/driver"
+import drv "database:driver"
 import sql3 "database:bindings/sqlite/sqlite"
 
 // --- Driver vtable (public) ---

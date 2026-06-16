@@ -3,7 +3,7 @@ package sqlmock
 import "core:testing"
 
 import sql "database:sql"
-import drv "database:sql/driver"
+import drv "database:driver"
 
 // User-under-test mirroring the demo in main.odin.
 User :: struct {

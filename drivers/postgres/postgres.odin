@@ -1,5 +1,5 @@
 // database:drivers/postgres — a pure-Odin PostgreSQL driver implementing the
-// `database:sql/driver` contract over the v3 frontend/backend wire protocol
+// `database:driver` contract over the v3 frontend/backend wire protocol
 // (no libpq). It speaks directly to a server over a TCP socket via core:net.
 //
 // Status / scope (v1):
@@ -35,7 +35,7 @@ import "core:net"
 import "core:strconv"
 import "core:strings"
 
-import drv "database:sql/driver"
+import drv "database:driver"
 
 // --- Driver vtable (public) ---
 

@@ -12,7 +12,7 @@ import "core:time"
 
 import mock "database:drivers/mock"
 import sql "database:sql"
-import drv "database:sql/driver"
+import drv "database:driver"
 
 // --- error-row safety -------------------------------------------------------
 

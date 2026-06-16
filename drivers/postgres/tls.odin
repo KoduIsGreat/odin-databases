@@ -19,7 +19,7 @@ package postgres
 @(require) import "core:fmt"
 @(require) import "core:strings"
 
-import drv "database:sql/driver"
+import drv "database:driver"
 
 DATABASE_PG_TLS :: #config(DATABASE_PG_TLS, false)
 

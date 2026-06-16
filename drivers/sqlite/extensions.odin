@@ -22,7 +22,7 @@ package sqlite
 import "core:strings"
 
 import sql "database:sql"
-import drv "database:sql/driver"
+import drv "database:driver"
 import sql3 "database:bindings/sqlite/sqlite"
 
 // enable_load_extension toggles SQLite's C-API extension loader for the

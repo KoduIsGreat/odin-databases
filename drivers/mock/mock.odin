@@ -26,7 +26,7 @@ import "core:strings"
 import "core:testing"
 
 import sql "database:sql"
-import drv "database:sql/driver"
+import drv "database:driver"
 
 // --- Public types ------------------------------------------------------------
 

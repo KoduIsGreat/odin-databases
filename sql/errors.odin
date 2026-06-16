@@ -8,7 +8,7 @@ import "base:runtime"
 // through untouched; a pool failure is not a property of the query anyway.
 //
 // The query string is borrowed, not cloned — see Error_Ctx in
-// `database:sql/driver` for the lifetime contract.
+// `database:driver` for the lifetime contract.
 @(private)
 with_query :: proc(err: Error, query: string, loc: runtime.Source_Code_Location) -> Error {
 	e := err

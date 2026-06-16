@@ -2,7 +2,7 @@ package postgres
 
 import "core:net"
 
-import drv "database:sql/driver"
+import drv "database:driver"
 
 // PostgreSQL frontend/backend protocol v3.0 (the on-the-wire framing).
 //

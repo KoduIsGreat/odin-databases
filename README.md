@@ -377,7 +377,7 @@ or `$ODB_INSTALL_DIR`); `just uninstall [dir]` removes it.
 | Import | Path | What |
 |---|---|---|
 | `database:sql` | `sql/` | core API + connection pool |
-| `database:sql/driver` | `sql/driver/` | driver contract (`Driver` vtable, `Value`, `Error`) |
+| `database:driver` | `driver/` | driver contract (`Driver` vtable, `Value`, `Error`) |
 | `database:sqlbuilder` | `sqlbuilder/` | typed SQL builder |
 | `database:migrate` | `migrate/` | schema-migration runner (`up`/`down`/`to`/`status`) |
 | `database:drivers/sqlite` | `drivers/sqlite/` | SQLite driver |

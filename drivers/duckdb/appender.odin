@@ -4,7 +4,7 @@ import "core:strings"
 import "core:time"
 
 import sql "database:sql"
-import drv "database:sql/driver"
+import drv "database:driver"
 import ddb "database:bindings/duckdb/duckdb"
 
 // Appender is DuckDB's bulk-insert fast path — far faster than row-by-row
