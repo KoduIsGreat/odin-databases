@@ -8,7 +8,7 @@ import sql "database:sql"
 
 scan_Post :: proc(rows: ^sql.Rows, dest: ^Post, loc := #caller_location) -> sql.Error {
 	if !rows.has_row {
-		return sql.Scan_Error{kind = .No_Row, col_idx = -1, ctx = {query = rows.query, loc = loc}}
+		return sql.General_Error.No_Row
 	}
 	detached := sql.row_detached(rows)
 	_ = detached
@@ -41,7 +41,7 @@ scan_Post_row :: proc(row: ^sql.Row, dest: ^Post, loc := #caller_location) -> sq
 
 scan_User :: proc(rows: ^sql.Rows, dest: ^User, loc := #caller_location) -> sql.Error {
 	if !rows.has_row {
-		return sql.Scan_Error{kind = .No_Row, col_idx = -1, ctx = {query = rows.query, loc = loc}}
+		return sql.General_Error.No_Row
 	}
 	detached := sql.row_detached(rows)
 	_ = detached

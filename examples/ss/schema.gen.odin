@@ -98,8 +98,9 @@ ParticipantArchive_Row :: struct {
 	id: string,
 	participant_id: string,
 	archived_at: Maybe(time.Time),
-	archived_by: string,
+	archived_by: Maybe(string),
 	created_at: Maybe(time.Time),
+	source: string,
 }
 
 //+sql:scan
@@ -630,13 +631,15 @@ ParticipantArchive := struct {
 	archived_at: sb.Column(time.Time),
 	archived_by: sb.Column(string),
 	created_at: sb.Column(time.Time),
+	source: sb.Column(string),
 }{
 	_info = {name = "participant_archive"},
 	id = {base = {table = "participant_archive", name = "id", type_id = string}},
 	participant_id = {base = {table = "participant_archive", name = "participant_id", type_id = string}},
 	archived_at = {base = {table = "participant_archive", name = "archived_at", type_id = time.Time, nullable = true}},
-	archived_by = {base = {table = "participant_archive", name = "archived_by", type_id = string}},
+	archived_by = {base = {table = "participant_archive", name = "archived_by", type_id = string, nullable = true}},
 	created_at = {base = {table = "participant_archive", name = "created_at", type_id = time.Time, nullable = true}},
+	source = {base = {table = "participant_archive", name = "source", type_id = string}},
 }
 
 ParticipantDevices := struct {

@@ -61,6 +61,8 @@ check-all:
     odin check examples/migrations {{coll}}
     odin check examples/duckdb {{coll}}
     odin check examples/testing -no-entry-point {{coll}}
+    odin check drivers -no-entry-point {{coll}}
+    odin check drivers -no-entry-point {{coll}} -define:DATABASE_URL_DUCKDB=true
     odin check drivers/sqlite -no-entry-point {{coll}}
     odin check drivers/postgres -no-entry-point {{coll}}
     odin check drivers/postgres -no-entry-point {{coll}} -define:DATABASE_PG_TLS=true

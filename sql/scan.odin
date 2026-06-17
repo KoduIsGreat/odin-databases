@@ -40,7 +40,7 @@ scan_struct :: proc(
 	loc := #caller_location,
 ) -> Error where intrinsics.type_is_struct(T) {
 	if !rows.has_row {
-		return with_query(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}, rows.query, loc)
+		return with_query(General_Error.No_Row, rows.query, loc)
 	}
 
 	info := runtime.type_info_base(type_info_of(T))
@@ -103,7 +103,7 @@ scan_values :: proc(rows: ^Rows, dests: ..any, loc := #caller_location) -> Error
 @(private)
 scan_values_impl :: proc(rows: ^Rows, dests: []any, loc: runtime.Source_Code_Location) -> Error {
 	if !rows.has_row {
-		return with_query(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}, rows.query, loc)
+		return with_query(General_Error.No_Row, rows.query, loc)
 	}
 
 	if len(dests) != rows.col_count {
@@ -138,8 +138,7 @@ scan_values_impl :: proc(rows: ^Rows, dests: []any, loc: runtime.Source_Code_Loc
 			)
 		}
 		dest_ptr := (^rawptr)(d.data)^
-		if vtype, ok := set_field(dest_ptr, 0, p.elem.id, rows._values[i], rows._detached);
-		   !ok {
+		if vtype, ok := set_field(dest_ptr, 0, p.elem.id, rows._values[i], rows._detached); !ok {
 			return with_query(
 				Scan_Error {
 					kind = .Column_Type_Mismatch,
@@ -217,7 +216,8 @@ scan_struct_dest_guard :: proc(
 	rows: ^Rows,
 	dest: ^$T,
 	loc := #caller_location, // matches scan_values' trailing default — without it, overload scoring prefers the variadic and the guard never fires
-) -> Error where intrinsics.type_is_struct(T), T != time.Time {
+) -> Error where intrinsics.type_is_struct(T),
+	T != time.Time {
 	#assert(
 		false,
 		"sql.scan does not map structs — use a scangen-generated scanner, or sql.scan_struct for explicit reflection (sql.scan_values for an intentional positional struct destination)",
@@ -231,7 +231,8 @@ row_scan_struct_dest_guard :: proc(
 	row: ^Row,
 	dest: ^$T,
 	loc := #caller_location, // see scan_struct_dest_guard
-) -> Error where intrinsics.type_is_struct(T), T != time.Time {
+) -> Error where intrinsics.type_is_struct(T),
+	T != time.Time {
 	#assert(
 		false,
 		"sql.scan does not map structs — use a scangen-generated scanner, or sql.row_scan_struct for explicit reflection (sql.row_scan_values for an intentional positional struct destination)",
@@ -382,14 +383,7 @@ set_field :: proc(
 // Maybe(T)), returning the inner variant's typeid and the union's tag layout.
 // Used by set_field to scan a column value into an optional struct field.
 @(private)
-maybe_union :: proc(
-	tid: typeid,
-) -> (
-	inner: typeid,
-	tag_offset: uintptr,
-	tag_size: int,
-	ok: bool,
-) {
+maybe_union :: proc(tid: typeid) -> (inner: typeid, tag_offset: uintptr, tag_size: int, ok: bool) {
 	ti := runtime.type_info_base(type_info_of(tid))
 	u, is_union := ti.variant.(runtime.Type_Info_Union)
 	if !is_union {return}

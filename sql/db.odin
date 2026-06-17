@@ -85,7 +85,7 @@ close :: proc(db: ^DB) -> Error {
 	sync.mutex_lock(&db.mu)
 	if db.closed {
 		sync.mutex_unlock(&db.mu)
-		return Pool_Error.Closed
+		return General_Error.Pool_Closed
 	}
 	db.closed = true
 
@@ -246,7 +246,7 @@ pool_acquire :: proc(db: ^DB) -> (Conn_Handle, time.Time, Error) {
 
 	for {
 		if db.closed {
-			return nil, {}, Pool_Error.Closed
+			return nil, {}, General_Error.Pool_Closed
 		}
 
 		now := time.now()
@@ -291,7 +291,7 @@ pool_acquire :: proc(db: ^DB) -> (Conn_Handle, time.Time, Error) {
 			}
 			remaining := time.diff(now, deadline)
 			if remaining <= 0 {
-				return nil, {}, Pool_Error.Timeout
+				return nil, {}, General_Error.Pool_Timeout
 			}
 			_ = sync.cond_wait_with_timeout(&db.cond, &db.mu, remaining)
 			// Loop re-checks closed, free list, and deadline.

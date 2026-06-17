@@ -114,7 +114,7 @@ Isolation_Level :: enum {
 // contract layer so the union type matches.
 Error :: union {
 	Driver_Error,
-	Pool_Error,
+	General_Error,
 	Arg_Error,
 	Scan_Error,
 }
@@ -150,6 +150,13 @@ Pool_Error :: enum {
 	Timeout,
 }
 
+General_Error :: enum {
+	No_Row,
+	Pool_Exhausted,
+	Pool_Closed,
+	Pool_Timeout,
+}
+
 Arg_Error_Kind :: enum {
 	Wrong_Count, // number of args supplied != number of query placeholders
 	Invalid_Type, // an argument's type can't be bound as a query parameter
@@ -169,7 +176,6 @@ Arg_Error :: struct {
 }
 
 Scan_Error_Kind :: enum {
-	No_Row,
 	Column_Count_Mismatch,
 	Dest_Not_Pointer,
 	Column_Type_Mismatch,
@@ -216,19 +222,19 @@ err_to_string :: proc(u: Error, allocator := context.allocator) -> string {
 	switch err in u {
 	case Driver_Error:
 		fmt.sbprintf(&b, "sql driver error code %v: %v", err.code, err.message)
-	case Pool_Error:
+	case General_Error:
 		switch err {
-		case .Exhausted:
+		case .No_Row:
+			strings.write_string(&b, "returned no rows")
+		case .Pool_Exhausted:
 			strings.write_string(&b, "sql pool exhausted")
-		case .Closed:
+		case .Pool_Closed:
 			strings.write_string(&b, "sql pool closed")
-		case .Timeout:
+		case .Pool_Timeout:
 			strings.write_string(&b, "sql pool timeout")
 		}
 	case Scan_Error:
 		switch err.kind {
-		case .No_Row:
-			strings.write_string(&b, "returned no rows")
 		case .Column_Count_Mismatch:
 			fmt.sbprintf(
 				&b,
@@ -287,4 +293,12 @@ err_to_string :: proc(u: Error, allocator := context.allocator) -> string {
 		}
 	}
 	return strings.to_string(b)
+}
+
+error_is_no_row :: proc(u: Error) -> bool {
+	#partial switch err in u {
+	case General_Error:
+		return err == .No_Row
+	}
+	return false
 }

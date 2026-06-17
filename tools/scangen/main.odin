@@ -57,15 +57,15 @@ import "core:flags"
 import "core:fmt"
 import "core:odin/ast"
 import "core:odin/parser"
-import "core:path/filepath"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 
 // --- Specs collected from the AST ---
 
 Field_Spec :: struct {
-	name:       string,
-	odin_type:  string, // verbatim type text from the source
+	name:      string,
+	odin_type: string, // verbatim type text from the source
 }
 
 Struct_Spec :: struct {
@@ -74,9 +74,9 @@ Struct_Spec :: struct {
 }
 
 Pkg_Spec :: struct {
-	pkg_name: string,
-	dir:      string,
-	structs:  [dynamic]Struct_Spec,
+	pkg_name:     string,
+	dir:          string,
+	structs:      [dynamic]Struct_Spec,
 	uses_strings: bool, // emit `import "core:strings"` if any string/[]byte field
 	uses_time:    bool, // emit `import "core:time"` if any time.Time field
 }
@@ -85,7 +85,7 @@ Pkg_Spec :: struct {
 
 Kind :: enum {
 	Unsupported,
-	Int_From_I64,   // any int-family type, source value is i64
+	Int_From_I64, // any int-family type, source value is i64
 	Float_From_F64, // f32/f64, source value is f64
 	Bool,
 	String,
@@ -138,13 +138,10 @@ unwrap_maybe :: proc(t: string) -> string {
 	return t
 }
 
-collect_struct :: proc(
-	pkg: ^Pkg_Spec,
-	file: ^ast.File,
-	name: string,
-	st: ^ast.Struct_Type,
-) {
-	spec := Struct_Spec{name = name}
+collect_struct :: proc(pkg: ^Pkg_Spec, file: ^ast.File, name: string, st: ^ast.Struct_Type) {
+	spec := Struct_Spec {
+		name = name,
+	}
 
 	if st.fields != nil {
 		for f in st.fields.list {
@@ -263,14 +260,20 @@ emit_guards :: proc(b: ^strings.Builder, pkg: ^Pkg_Spec) {
 	// default — without it, overload scoring prefers the variadic candidate
 	// and the guard never participates.
 	ws(b, "\n@(private)\n")
-	ws(b, "_scan_no_generated_scanner :: proc(rows: ^sql.Rows, dest: ^$T, loc := #caller_location) -> sql.Error\n")
+	ws(
+		b,
+		"_scan_no_generated_scanner :: proc(rows: ^sql.Rows, dest: ^$T, loc := #caller_location) -> sql.Error\n",
+	)
 	emit_where(b, pkg)
 	ws(b, "\t#assert(false, \"", GUARD_MSG, "\")\n")
 	ws(b, "\treturn nil\n")
 	ws(b, "}\n")
 
 	ws(b, "\n@(private)\n")
-	ws(b, "_row_scan_no_generated_scanner :: proc(row: ^sql.Row, dest: ^$T, loc := #caller_location) -> sql.Error\n")
+	ws(
+		b,
+		"_row_scan_no_generated_scanner :: proc(row: ^sql.Row, dest: ^$T, loc := #caller_location) -> sql.Error\n",
+	)
 	emit_where(b, pkg)
 	ws(b, "\t#assert(false, \"", GUARD_MSG, "\")\n")
 	ws(b, "\treturn nil\n")
@@ -279,15 +282,22 @@ emit_guards :: proc(b: ^strings.Builder, pkg: ^Pkg_Spec) {
 
 // Helpers — explicit string concatenation rather than fmt.sbprintf so we
 // don't have to brace-escape generated `{` / `}` in our output strings.
-@(private="file")
+@(private = "file")
 ws :: proc(b: ^strings.Builder, parts: ..string) {
 	for p in parts {strings.write_string(b, p)}
 }
 
 emit_struct_proc :: proc(b: ^strings.Builder, spec: ^Struct_Spec) {
-	ws(b, "scan_", spec.name, " :: proc(rows: ^sql.Rows, dest: ^", spec.name, ", loc := #caller_location) -> sql.Error {\n")
+	ws(
+		b,
+		"scan_",
+		spec.name,
+		" :: proc(rows: ^sql.Rows, dest: ^",
+		spec.name,
+		", loc := #caller_location) -> sql.Error {\n",
+	)
 	ws(b, "\tif !rows.has_row {\n")
-	ws(b, "\t\treturn sql.Scan_Error{kind = .No_Row, col_idx = -1, ctx = {query = rows.query, loc = loc}}\n")
+	ws(b, "\t\treturn sql.General_Error.No_Row\n")
 	ws(b, "\t}\n")
 	ws(b, "\tdetached := sql.row_detached(rows)\n")
 	ws(b, "\t_ = detached\n") // suppress "declared but not used" if no string/bytes fields
@@ -306,7 +316,14 @@ emit_struct_proc :: proc(b: ^strings.Builder, spec: ^Struct_Spec) {
 
 	// ^Row variant for query_row: surface any stored query/no-row error,
 	// then scan the detached buffered row.
-	ws(b, "\nscan_", spec.name, "_row :: proc(row: ^sql.Row, dest: ^", spec.name, ", loc := #caller_location) -> sql.Error {\n")
+	ws(
+		b,
+		"\nscan_",
+		spec.name,
+		"_row :: proc(row: ^sql.Row, dest: ^",
+		spec.name,
+		", loc := #caller_location) -> sql.Error {\n",
+	)
 	ws(b, "\tif row.err != nil {\n")
 	ws(b, "\t\treturn row.err\n")
 	ws(b, "\t}\n")
@@ -348,7 +365,14 @@ emit_field_case :: proc(b: ^strings.Builder, f: ^Field_Spec) {
 	case .Time:
 		ws(b, "\t\t\tif v, ok := val.(time.Time); ok { dest.", f.name, " = v }\n")
 	case .Unsupported:
-		ws(b, "\t\t\t// scangen: unsupported field type \"", f.odin_type, "\" for ", f.name, "; skipping\n")
+		ws(
+			b,
+			"\t\t\t// scangen: unsupported field type \"",
+			f.odin_type,
+			"\" for ",
+			f.name,
+			"; skipping\n",
+		)
 	}
 }
 
@@ -356,7 +380,8 @@ emit_field_case :: proc(b: ^strings.Builder, f: ^Field_Spec) {
 
 // Options is the scangen command line, parsed declaratively by core:flags.
 Options :: struct {
-	dir: string `args:"pos=0,required" usage:"package directory to scan for //+sql:scan structs (writes <dir>/scan.gen.odin)"`,
+	dir:
+	string `args:"pos=0,required" usage:"package directory to scan for //+sql:scan structs (writes <dir>/scan.gen.odin)"`,
 }
 
 // run parses args and generates the scanners, returning a process exit code.
@@ -375,7 +400,9 @@ run :: proc(prog: string, args: []string) -> int {
 		return 1
 	}
 
-	spec := Pkg_Spec{dir = opt.dir}
+	spec := Pkg_Spec {
+		dir = opt.dir,
+	}
 	for _, file in pkg.files {
 		walk_file(&spec, file)
 	}

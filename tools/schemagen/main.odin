@@ -636,8 +636,20 @@ when DUCKDB_INTROSPECT {
 		switch {
 		case up == "BOOLEAN":
 			return "bool", true
-		case up == "TINYINT", up == "SMALLINT", up == "INTEGER", up == "BIGINT",
-		     up == "UTINYINT", up == "USMALLINT", up == "UINTEGER":
+		case up ==
+		     "TINYINT",
+		     up ==
+		     "SMALLINT",
+		     up ==
+		     "INTEGER",
+		     up ==
+		     "BIGINT",
+		     up ==
+		     "UTINYINT",
+		     up ==
+		     "USMALLINT",
+		     up ==
+		     "UINTEGER":
 			return "i64", true
 		case up == "UBIGINT", up == "HUGEINT":
 			return "i128", true
@@ -647,8 +659,12 @@ when DUCKDB_INTROSPECT {
 			return "f64", true
 		case strings.has_prefix(up, "DECIMAL"), strings.has_prefix(up, "NUMERIC"):
 			return "f64", true // driver maps the DECIMAL column type to f64
-		case strings.has_prefix(up, "VARCHAR"), strings.has_prefix(up, "CHAR"),
-		     up == "TEXT", up == "STRING":
+		case strings.has_prefix(up, "VARCHAR"),
+		     strings.has_prefix(up, "CHAR"),
+		     up ==
+		     "TEXT",
+		     up ==
+		     "STRING":
 			return "string", true
 		case up == "BLOB", up == "BYTEA":
 			return "[]byte", true
@@ -866,9 +882,9 @@ detect_pkg :: proc(dir: string) -> string {
 Options :: struct {
 	dir:    
 	string `args:"pos=0,required" usage:"package directory to write schema.gen.odin into"`,
-	db:
+	db:     
 	string `args:"name=db"        usage:"introspect this database instead of structs (SQLite/DuckDB file path, or a DSN with -driver=postgres)"`,
-	driver:
+	driver: 
 	string `args:"name=driver"    usage:"DB driver for -db: sqlite (default), postgres, or duckdb (build with -define:SCHEMAGEN_DUCKDB=true)"`,
 	pkg:    
 	string `args:"name=package"   usage:"override the generated package name"`,

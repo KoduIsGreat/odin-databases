@@ -119,13 +119,17 @@ tx_query_row :: proc(tx: ^Tx, query_str: string, args: ..Value, loc := #caller_l
 // the error to store in the Row: a real mid-stream/driver error (already
 // annotated by next()) wins over the generic "no rows" diagnosis.
 @(private)
-first_row_error :: proc(rows: ^Rows, query_str: string, loc: runtime.Source_Code_Location) -> Error {
+first_row_error :: proc(
+	rows: ^Rows,
+	query_str: string,
+	loc: runtime.Source_Code_Location,
+) -> Error {
 	iter_err := rows.err
 	rows_close(rows)
 	if iter_err != nil {
 		return iter_err
 	}
-	return with_query(Scan_Error{kind = .No_Row, col_idx = -1, col_name = ""}, query_str, loc)
+	return with_query(General_Error.No_Row, query_str, loc)
 }
 
 // error_row builds a Row whose embedded Rows is pre-closed, so callers

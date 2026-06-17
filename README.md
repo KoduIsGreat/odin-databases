@@ -85,8 +85,6 @@ For editor/LSP resolution, add the collection to your `ols.json`:
 { "collections": [ { "name": "database", "path": "vendor/odin-databases" } ] }
 ```
 
-(There is no `../..` anywhere — every import is rooted at the collection.)
-
 ## Quick start
 
 ```odin
@@ -105,14 +103,20 @@ User :: struct {
 
 main :: proc() {
 	db, err := sql.open(&sqlite.driver, "app.db") // or ":memory:"
-	if err != nil {fmt.eprintfln("open: %v", err);return}
+	if err != nil {
+        fmt.eprintfln("open: %v", err)
+        return
+    }
 	defer sql.close(db)
 
 	sql.exec(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
 	sql.exec(db, "INSERT INTO users (name, age) VALUES (?, ?)", "Alice", i64(30))
 
 	rows, qerr := sql.query(db, "SELECT id, name, age FROM users WHERE age >= ?", i64(18))
-	if qerr != nil {fmt.eprintfln("query: %v", qerr);return}
+	if qerr != nil {
+        fmt.eprintfln("query: %v", qerr)
+        return
+    }
 	defer sql.rows_close(&rows)
 
 	for sql.next(&rows) {
@@ -123,7 +127,10 @@ main :: proc() {
 	// next() returns false for BOTH a clean end-of-rows and a mid-stream
 	// failure, so check rows_err afterward (like Go's rows.Err) — otherwise a
 	// truncated result looks complete.
-	if rerr := sql.rows_err(&rows); rerr != nil {fmt.eprintfln("rows: %v", rerr);return}
+	if rerr := sql.rows_err(&rows); rerr != nil {
+        fmt.eprintfln("rows: %v", rerr)
+        return
+    }
 }
 ```
 

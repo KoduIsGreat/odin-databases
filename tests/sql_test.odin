@@ -10,9 +10,9 @@ import "core:testing"
 import "core:thread"
 import "core:time"
 
+import drv "database:driver"
 import mock "database:drivers/mock"
 import sql "database:sql"
-import drv "database:driver"
 
 // --- error-row safety -------------------------------------------------------
 
@@ -29,7 +29,7 @@ test_close_row_safe_on_no_row :: proc(t: ^testing.T) {
 	row := sql.query_row(db, "SELECT id FROM users WHERE id = ?", i64(99))
 	defer sql.close_row(&row) // must not crash
 
-	_, ok := row.err.(sql.Scan_Error)
+	_, ok := row.err.(sql.General_Error)
 	testing.expect(t, ok, "expected Scan_Error on no-row Row")
 }
 
@@ -61,10 +61,7 @@ test_error_carries_query_and_call_site :: proc(t: ^testing.T) {
 	m, db := mock.open(t)
 	defer mock.close(m, db)
 
-	mock.returns_error(
-		mock.expect_exec(m, "UPDATE"),
-		drv.Driver_Error{code = 1, message = "boom"},
-	)
+	mock.returns_error(mock.expect_exec(m, "UPDATE"), drv.Driver_Error{code = 1, message = "boom"})
 
 	q := "UPDATE users SET name = ? WHERE id = ?"
 	_, err := sql.exec(db, q, "alice", i64(1))
@@ -124,7 +121,9 @@ test_time_dest_scans_positionally :: proc(t: ^testing.T) {
 	m, db := mock.open(t)
 	defer mock.close(m, db)
 
-	want := time.Time{_nsec = 1_700_000_000 * 1e9}
+	want := time.Time {
+		_nsec = 1_700_000_000 * 1e9,
+	}
 	mock.returns_rows(mock.expect_query(m, "SELECT"), {"at"}, {{want}})
 
 	rows, qerr := sql.query(db, "SELECT at FROM ts")
@@ -191,8 +190,8 @@ test_pool_wait_timeout :: proc(t: ^testing.T) {
 	_, err2 := sql.checkout(db)
 	elapsed := time.diff(start, time.now())
 
-	pe, is_pe := err2.(sql.Pool_Error)
-	testing.expect(t, is_pe && pe == .Timeout, "expected Pool_Error.Timeout")
+	pe, is_pe := err2.(sql.General_Error)
+	testing.expect(t, is_pe && pe == .Pool_Timeout, "expected Pool_Error.Timeout")
 	testing.expect(t, elapsed >= time.Millisecond * 40, "timeout fired too early")
 	testing.expect(t, elapsed < time.Millisecond * 500, "timeout fired suspiciously late")
 }
