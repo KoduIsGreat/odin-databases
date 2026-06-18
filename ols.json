@@ -1,9 +1,16 @@
 {
-	"$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
-	"collections": [
-		{ "name": "database", "path": "." }
-	],
-	"enable_document_symbols": true,
-	"enable_hover": true,
-	"enable_snippets": true
+  "$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
+  "collections": [
+    {
+      "name": "database",
+      "path": "."
+    },
+    {
+      "name": "testcontainers",
+      "path": "../odin-test-containers"
+    }
+  ],
+  "enable_document_symbols": true,
+  "enable_hover": true,
+  "enable_snippets": true
 }

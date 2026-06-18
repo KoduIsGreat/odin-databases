@@ -8,7 +8,7 @@ set shell := ["bash", "-cu"]
 
 # The repo is consumed as the `database` collection: import "database:sql", etc.
 # Every odin command registers it (rooted at the repo, so no ../.. imports).
-coll := "-collection:database=."
+coll := "-collection:database=. -collection:testcontainers=../odin-test-containers"
 
 # Where `just install` puts the `odb` binary. Defaults to ~/.local/bin (no sudo,
 # on PATH for most shells). Override with `ODB_INSTALL_DIR` or `just install <dir>`.
