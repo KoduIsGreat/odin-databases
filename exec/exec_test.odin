@@ -166,7 +166,7 @@ Bg_Job :: struct {
 }
 
 bg_run :: proc(jb: ^Job, conn: ^sql.Conn) {
-	gate := cast(^sync.Sema)jb.user
+	gate := cast(^sync.Sema)jb.userdata
 	sync.sema_wait(gate) // hold the slot until the test releases us
 }
 
@@ -181,9 +181,9 @@ test_bg_bounded :: proc(t: ^testing.T) {
 
 	gate: sync.Sema
 
-	j1 := new_job(&ex, Bg_Job); j1.run = bg_run; j1.user = &gate
-	j2 := new_job(&ex, Bg_Job); j2.run = bg_run; j2.user = &gate
-	j3 := new_job(&ex, Bg_Job); j3.run = bg_run; j3.user = &gate
+	j1 := new_job(&ex, Bg_Job); j1.run = bg_run; j1.userdata = &gate
+	j2 := new_job(&ex, Bg_Job); j2.run = bg_run; j2.userdata = &gate
+	j3 := new_job(&ex, Bg_Job); j3.run = bg_run; j3.userdata = &gate
 
 	testing.expect(t, submit_bg(&ex, &j1.base, .IO))
 	testing.expect(t, submit_bg(&ex, &j2.base, .IO))
@@ -203,7 +203,7 @@ Inc_Job :: struct {
 inc_run :: proc(jb: ^Job, conn: ^sql.Conn) {}
 
 inc_finish :: proc(jb: ^Job) {
-	p := cast(^int)jb.user
+	p := cast(^int)jb.userdata
 	intrinsics.atomic_add(p, 1)
 }
 
@@ -221,7 +221,7 @@ test_inline_completer :: proc(t: ^testing.T) {
 		j := new_job(&ex, Inc_Job)
 		j.run = inc_run
 		j.finish = inc_finish
-		j.user = &counter
+		j.userdata = &counter
 		testing.expect(t, submit_db(&ex, &j.base))
 	}
 

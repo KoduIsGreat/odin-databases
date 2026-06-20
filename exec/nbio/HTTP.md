@@ -1,12 +1,12 @@
 # Driving an HTTP server with `database:exec/nbio`
 
 This is the **handler layer** (phase 2b) that sits on top of the `exec_nbio`
-bridge. The bridge itself (`bridge.odin`) is built and tested against real
-`core:nbio` in `bridge_test.odin`; everything in *this* document is
-**illustrative** — it depends on a third-party HTTP library
-([`laytan/odin-http`](https://github.com/laytan/odin-http)) that is not vendored
-here, so it is not compiled or tested by this repo. Treat the `http.*` calls as
-indicative of shape, not a verified API.
+bridge. A complete, **working** version lives in
+[`examples/http`](../../examples/http) — it was built and run against
+[`laytan/odin-http`](https://github.com/laytan/odin-http) (which confirms it uses
+`core:nbio`, the same generation this bridge targets). odin-http is not vendored
+in this repo, so the example builds with a collection flag pointing at a local
+checkout (see its header). The snippets below mirror that example.
 
 ## What is verified vs. illustrative
 
@@ -15,7 +15,15 @@ indicative of shape, not a verified API.
 | Worker pool, pinned connections, lanes, bounded background, cancellation (`database:exec`) | built + tested |
 | Cross-thread completion delivery onto the loop thread (`exec_nbio.completer`) | built + tested against `core:nbio` |
 | Per-request deadline → 504 + query interrupt + drop-late-result (`exec_nbio.submit` + `on_timeout`) | built + tested |
-| The `http.*` handler bodies below (router, `respond_json`, `respond`) | illustrative only |
+| The full HTTP handler layer (router, `respond_json`, 404/504) | built + **run** against odin-http (`examples/http`) |
+
+Verified behaviour of `examples/http` (curl against the running server):
+
+```
+GET /users/1    -> 200 {"id":1,"name":"Alice","age":30}
+GET /users/999  -> 404                       (sql No_Row mapped to Not_Found)
+GET /slow       -> 504 after ~200ms          (deadline fired, query cancelled)
+```
 
 ## The shape
 
@@ -142,18 +150,24 @@ main :: proc() {
 }
 ```
 
-## Open items before this is real
+## Resolved during phase 2
 
-1. **odin-http is not vendored here.** Vendor it and replace the illustrative
-   `http.*` calls with the real API.
-2. **nbio generation.** odin-http historically bundled its own, older `nbio`
-   with a different API than `core:nbio` (which this bridge targets). Confirm the
-   odin-http you use runs on `core:nbio` — if it bundles the older one, the
-   bridge needs porting to that API (the `exec`/`wake_up`/`prep_*` calls differ).
-3. **The drain hook / who calls `tick`.** odin-http's server runs the nbio loop
-   for you. Confirm its loop is `core:nbio`'s so the worker's `wake_up` actually
-   breaks the server's `tick` — otherwise the completion op won't be picked up
-   promptly. (`bridge_test.odin` drives `nbio.tick` itself to prove the path; a
-   real server would rely on its own loop.)
-4. **Per-worker connection + SQLite.** With pinned connections a `:memory:` DSN
-   gives each worker its own empty database; use a file DSN in a real server.
+1. **nbio generation — resolved.** Current odin-http imports `core:nbio` (its
+   bundled `old_nbio` is deprecated and unused by the server), so this bridge is
+   API-compatible as-is.
+2. **The drain hook / who calls `tick` — resolved.** odin-http's server runs
+   `core:nbio`'s loop (`nbio.tick` per server thread), so the worker's `wake_up`
+   breaks that tick and the completion op is picked up — confirmed by the working
+   example. (`bridge_test.odin` drives `nbio.tick` itself only to test the bridge
+   in isolation.)
+
+## Remaining caveats
+
+1. **odin-http is an external dependency**, vendored via a collection flag, not
+   committed here (see `examples/http`'s header for the clone + build command).
+2. **Single loop only.** The example runs the server single-threaded
+   (`opts.thread_count = 1`) so the executor binds to one loop. odin-http can run
+   one nbio loop per core; multi-loop support would need a per-loop completer (a
+   request's completion must return to the loop that owns its connection).
+3. **Per-worker connection + SQLite.** With pinned connections a `:memory:` DSN
+   gives each worker its own empty database; the example uses a file DSN.

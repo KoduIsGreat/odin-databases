@@ -65,7 +65,8 @@ Job :: struct {
 	run:        proc(j: ^Job, conn: ^sql.Conn),
 	// finish delivers the result. May be nil. Must not block or use the DB.
 	finish:     proc(j: ^Job),
-	user:       rawptr, // optional handler payload (alternative to embedding)
+	userdata:   rawptr, // optional handler payload (alternative to embedding). Named
+	// `userdata`, not `user`, so it does not collide with common embedder field names.
 
 	// --- result ---
 	err:        sql.Error,

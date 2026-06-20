@@ -44,6 +44,13 @@ build: gen
 check:
     odin check . {{coll}}
 
+# Build/run the HTTP example. Needs a laytan/odin-http checkout; the `http`
+# collection points at the parent dir, so clone it as a sibling of this repo:
+#   git clone https://github.com/laytan/odin-http ../odin-http
+# Then: `just http-example` (or `just http-example run`).
+http-example action="build":
+    odin {{action}} examples/http {{coll}} -collection:http=..
+
 # Type-check every importable package in the repo. Library packages (and the
 # test-only `testing` example) get -no-entry-point so the check doesn't fail
 # looking for `main`.
