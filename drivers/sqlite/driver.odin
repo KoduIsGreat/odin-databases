@@ -30,6 +30,7 @@ driver := drv.Driver {
 	begin        = sqlite_begin,
 	tx_commit    = sqlite_tx_commit,
 	tx_rollback  = sqlite_tx_rollback,
+	interrupt    = sqlite_interrupt,
 }
 
 // --- Internal wrapper types ---
@@ -347,6 +348,15 @@ sqlite_ping :: proc(handle: drv.Conn_Handle) -> drv.Error {
 @(private)
 sqlite_reset_conn :: proc(handle: drv.Conn_Handle) -> drv.Error {
 	return nil
+}
+
+// sqlite_interrupt aborts any statement running on this connection. Safe to
+// call from another thread (sqlite3_interrupt sets an atomic flag); the
+// in-flight step() then returns SQLITE_INTERRUPT, surfaced as a Driver_Error.
+@(private)
+sqlite_interrupt :: proc(handle: drv.Conn_Handle) {
+	conn := cast(^Sqlite_Conn)handle
+	sql3.interrupt(conn.db)
 }
 
 // --- Direct exec / query ---

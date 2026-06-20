@@ -44,6 +44,13 @@ build: gen
 check:
     odin check . {{coll}}
 
+# Build/run the HTTP example. Needs a laytan/odin-http checkout; the `http`
+# collection points at the parent dir, so clone it as a sibling of this repo:
+#   git clone https://github.com/laytan/odin-http ../odin-http
+# Then: `just http-example` (or `just http-example run`).
+http-example action="build":
+    odin {{action}} examples/http {{coll}} -collection:http=..
+
 # Type-check every importable package in the repo. Library packages (and the
 # test-only `testing` example) get -no-entry-point so the check doesn't fail
 # looking for `main`.
@@ -53,6 +60,8 @@ check-all:
     odin check driver -no-entry-point {{coll}}
     odin check sqlbuilder -no-entry-point {{coll}}
     odin check migrate -no-entry-point {{coll}}
+    odin check exec -no-entry-point {{coll}}
+    odin check exec/nbio -no-entry-point {{coll}}
     odin check examples/quickstart {{coll}}
     odin check examples/query_builder {{coll}}
     odin check examples/introspection {{coll}}
@@ -88,6 +97,8 @@ test:
     odin test drivers/duckdb {{coll}}
     odin test sqlbuilder {{coll}}
     odin test migrate {{coll}}
+    odin test exec {{coll}}
+    odin test exec/nbio {{coll}}
     odin test tools/querygen {{coll}}
     odin test tools/migragen {{coll}}
     odin test tools/migranew {{coll}}
