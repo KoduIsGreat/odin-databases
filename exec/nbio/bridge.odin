@@ -29,15 +29,20 @@ import "core:time"
 import "database:exec"
 
 // Request is the job base for nbio-driven handlers. It adds the per-request
-// state the bridge needs: the target loop, the pre-allocated completion op, an
-// optional deadline timer, a one-shot responded guard, and a timeout callback.
+// state the bridge needs: the originating loop, the pre-allocated completion op,
+// an optional deadline timer, a one-shot responded guard, and a timeout callback.
+//
+// `loop` is set by submit() to whatever loop is current on the calling (handler)
+// thread — so this works unchanged whether the server runs one nbio loop or one
+// per core: each request's completion is routed back to the loop that owns its
+// connection, never some other loop's.
 //
 // `responded` is owned by the loop thread. Both finish and on_timeout must
 // honour it so exactly one response is produced: a normal reply OR a 504, never
 // both.
 Request :: struct {
 	using job:  exec.Job,
-	loop:       ^nbio.Event_Loop,
+	loop:       ^nbio.Event_Loop, // set by submit() to the calling thread's loop
 	completion: ^nbio.Operation, // prepped on the loop thread; exec'd from the worker
 	deadline:   ^nbio.Operation, // armed deadline timer, or nil
 	responded:  bool, // loop-thread only: has a response been produced yet
@@ -45,10 +50,14 @@ Request :: struct {
 }
 
 // completer returns an exec.Completer that delivers each finished job back onto
-// loop and runs its finish there. REQUIRES every job submitted under it to embed
-// Request as its first field (submit() below does that for you).
-completer :: proc(loop: ^nbio.Event_Loop) -> exec.Completer {
-	return exec.Completer{data = loop, notify = on_worker_complete}
+// the loop that submitted it (carried per-request on r.completion), so a single
+// shared executor can serve any number of nbio loops. REQUIRES every job
+// submitted under it to embed Request as its first field (submit() does that).
+//
+// The shared executor's allocator must be thread-safe when more than one loop
+// submits concurrently (the default heap allocator is).
+completer :: proc() -> exec.Completer {
+	return exec.Completer{data = nil, notify = on_worker_complete}
 }
 
 // submit arms the request and queues it on the given lane. dur > 0 sets a
@@ -63,8 +72,10 @@ submit :: proc(
 	lane: exec.Lane,
 	dur: time.Duration = 0,
 ) -> bool {
-	// Allocate the completion op here, on the loop thread; the worker will exec
-	// it (only). Carry the job pointer in the op's user_data slot.
+	// Bind to the loop running on THIS (the handler's) thread, so the completion
+	// returns here even with one loop per core. Allocate the completion op on
+	// this loop; the worker will only exec it. Carry the job pointer in the op.
+	r.loop = nbio.current_thread_event_loop()
 	r.completion = nbio.prep_next_tick(on_loop_finish, r.loop)
 	r.completion.user_data[0] = rawptr(&r.job)
 
@@ -102,8 +113,9 @@ submit_io :: proc(ex: ^exec.Executor, r: ^Request, dur: time.Duration = 0) -> bo
 }
 
 // on_worker_complete runs on a WORKER thread when run() returns. It only execs
-// the pre-allocated completion op — a lock-free enqueue onto the loop's queue
-// plus a wake_up — so no nbio allocation happens off the loop thread.
+// the pre-allocated completion op — a lock-free enqueue onto that op's own loop
+// (r.loop) plus a wake_up — so the completion lands on the loop that submitted
+// the request, and no nbio allocation happens off the loop thread.
 @(private)
 on_worker_complete :: proc(data: rawptr, job: ^exec.Job) {
 	r := cast(^Request)job

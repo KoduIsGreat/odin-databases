@@ -11,14 +11,15 @@
 //   curl localhost:8080/users/999    -> 404
 //   curl localhost:8080/slow         -> 504 after ~200ms (deadline + query cancel)
 //
-// The server runs single-threaded (one nbio loop) so the executor binds to that
-// one loop. Each request's blocking query runs on a worker thread; the response
-// is written back on the loop thread by the bridge.
+// The server runs multi-threaded (one nbio loop per core). A single shared
+// executor serves all of them: each request's blocking query runs on a worker
+// thread, and the response is written back on the loop thread that submitted it
+// (the bridge routes the completion per-request, so it returns to the right
+// loop). The executor needs no loop reference.
 package http_example
 
 import "core:fmt"
 import "core:log"
-import "core:nbio"
 import "core:strconv"
 import "core:time"
 
@@ -31,10 +32,10 @@ import sqlite "database:drivers/sqlite"
 
 DB_PATH :: "/tmp/odin_http_example.db"
 
-// Handlers can't capture, so the executor and loop are package globals, set up
-// in main before serving begins.
+// Handlers can't capture, so the shared executor is a package global, set up in
+// main before serving begins. No loop global is needed — submit binds each
+// request to the loop of the thread handling it.
 g_ex: ^exec.Executor
-g_loop: ^nbio.Event_Loop
 
 User :: struct {
 	id:   i64,
@@ -95,7 +96,6 @@ handle_get_user :: proc(req: ^http.Request, res: ^http.Response) {
 	}
 
 	j := exec.new_job(g_ex, Get_User_Job)
-	j.loop = g_loop
 	j.res = res
 	j.id = id
 	j.run = get_user_run
@@ -138,7 +138,6 @@ slow_timeout :: proc(r: ^xn.Request) {
 
 handle_slow :: proc(req: ^http.Request, res: ^http.Response) {
 	j := exec.new_job(g_ex, Slow_Job)
-	j.loop = g_loop
 	j.res = res
 	j.run = slow_run
 	j.finish = slow_finish
@@ -167,14 +166,6 @@ seed_db :: proc() {
 main :: proc() {
 	context.logger = log.create_console_logger(.Info)
 
-	// Acquire this thread's nbio loop up front, so the executor can bind to it.
-	// listen_and_serve (single-threaded) re-acquires the same loop on this thread.
-	if err := nbio.acquire_thread_event_loop(); err != nil {
-		fmt.eprintfln("nbio: %v", err)
-		return
-	}
-	g_loop = nbio.current_thread_event_loop()
-
 	seed_db()
 
 	db, oerr := sql.open(&sqlite.driver, DB_PATH)
@@ -183,8 +174,9 @@ main :: proc() {
 		return
 	}
 
+	// One shared executor for every server loop; the completer is loop-agnostic.
 	ex: exec.Executor
-	exec.executor_init(&ex, db, 4, 4, 16, xn.completer(g_loop)) // 4 DB workers, 4 IO, bg cap 16
+	exec.executor_init(&ex, db, 4, 4, 16, xn.completer()) // 4 DB workers, 4 IO, bg cap 16
 	g_ex = &ex
 
 	router: http.Router
@@ -195,11 +187,10 @@ main :: proc() {
 	s: http.Server
 	http.server_shutdown_on_interrupt(&s)
 
-	opts := http.Default_Server_Opts
-	opts.thread_count = 1 // single loop, so one completer target
-
+	// Default opts run one nbio loop per core; the bridge routes each completion
+	// back to the loop that submitted it.
 	fmt.println("listening on http://localhost:8080")
-	err := http.listen_and_serve(&s, http.router_handler(&router), http.Default_Endpoint, opts)
+	err := http.listen_and_serve(&s, http.router_handler(&router))
 	fmt.printfln("server stopped: %v", err)
 
 	exec.executor_shutdown(&ex)

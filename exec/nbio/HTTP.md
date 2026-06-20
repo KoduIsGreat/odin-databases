@@ -132,21 +132,22 @@ respond_sql_error :: proc(res: ^http.Response, err: sql.Error) {
 
 ## Wiring it up
 
+The executor is loop-agnostic and shared across every server loop — `submit`
+binds each request to whichever loop is handling it, so the same code serves a
+single-threaded server or one nbio loop per core unchanged.
+
 ```odin
 main :: proc() {
-	nbio.acquire_thread_event_loop()
-	defer nbio.release_thread_event_loop()
-	loop := nbio.current_thread_event_loop()
-
 	db, _ := sql.open(&sqlite.driver, "app.db")
 	sql.set_conn_wait_timeout(db, 2 * time.Second) // pool saturation -> Pool_Timeout -> 503
 
 	ex: exec.Executor
-	exec.executor_init(&ex, db, 8, 32, 64, xn.completer(loop)) // 8 DB, 32 IO, bg cap 64
+	exec.executor_init(&ex, db, 8, 32, 64, xn.completer()) // 8 DB, 32 IO, bg cap 64; no loop
 	defer exec.executor_shutdown(&ex)
+	g_ex = &ex // handlers can't capture; reach the executor via a package global
 
-	// router.get(&r, "/users/:id", proc(req, res) { handle_get_user(&ex, loop, req, res) })
-	// http.listen_and_serve(&server, router.handler(&r))  // drives nbio.tick internally
+	// router.route_get(&r, "/users/(%d+)", http.handler(handle_get_user))
+	// http.listen_and_serve(&server, http.router_handler(&r))  // one loop per core; drives nbio.tick
 }
 ```
 
@@ -160,14 +161,17 @@ main :: proc() {
    breaks that tick and the completion op is picked up — confirmed by the working
    example. (`bridge_test.odin` drives `nbio.tick` itself only to test the bridge
    in isolation.)
+3. **Multi-loop (one nbio loop per core) — resolved.** The completer is
+   loop-agnostic: `submit` binds each request to the loop of the thread handling
+   it (via `nbio.current_thread_event_loop`), and the worker delivers the
+   completion back to *that* loop. A single shared executor serves all loops. The
+   example runs the default multi-threaded server; `test_multi_loop_delivery`
+   asserts two loops each receive their own completions. The executor's allocator
+   must be thread-safe when loops submit concurrently (the default heap is).
 
 ## Remaining caveats
 
 1. **odin-http is an external dependency**, vendored via a collection flag, not
    committed here (see `examples/http`'s header for the clone + build command).
-2. **Single loop only.** The example runs the server single-threaded
-   (`opts.thread_count = 1`) so the executor binds to one loop. odin-http can run
-   one nbio loop per core; multi-loop support would need a per-loop completer (a
-   request's completion must return to the loop that owns its connection).
-3. **Per-worker connection + SQLite.** With pinned connections a `:memory:` DSN
+2. **Per-worker connection + SQLite.** With pinned connections a `:memory:` DSN
    gives each worker its own empty database; the example uses a file DSN.

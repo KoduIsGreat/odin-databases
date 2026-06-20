@@ -3,6 +3,7 @@ package exec_nbio
 import "core:nbio"
 import "core:sync"
 import "core:testing"
+import "core:thread"
 import "core:time"
 
 import "database:exec"
@@ -79,18 +80,16 @@ reply_finish :: proc(jb: ^exec.Job) {
 test_delivery_on_loop_thread :: proc(t: ^testing.T) {
 	testing.expect_value(t, nbio.acquire_thread_event_loop(), nil)
 	defer nbio.release_thread_event_loop()
-	loop := nbio.current_thread_event_loop()
 
 	db, oerr := sql.open(&sqlite.driver, ":memory:")
 	testing.expect_value(t, oerr, nil)
 
 	ex: exec.Executor
-	exec.executor_init(&ex, db, 1, 1, 4, completer(loop))
+	exec.executor_init(&ex, db, 1, 1, 4, completer())
 	defer exec.executor_shutdown(&ex)
 
 	probe: Probe
 	r := exec.new_job(&ex, Req)
-	r.loop = loop
 	r.probe = &probe
 	r.run = query_run
 	r.finish = reply_finish
@@ -127,18 +126,16 @@ slow_timeout :: proc(rq: ^Request) {
 test_deadline_fires :: proc(t: ^testing.T) {
 	testing.expect_value(t, nbio.acquire_thread_event_loop(), nil)
 	defer nbio.release_thread_event_loop()
-	loop := nbio.current_thread_event_loop()
 
 	db, oerr := sql.open(&sqlite.driver, ":memory:")
 	testing.expect_value(t, oerr, nil)
 
 	ex: exec.Executor
-	exec.executor_init(&ex, db, 1, 1, 4, completer(loop))
+	exec.executor_init(&ex, db, 1, 1, 4, completer())
 	defer exec.executor_shutdown(&ex)
 
 	probe: Probe
 	r := exec.new_job(&ex, Req)
-	r.loop = loop
 	r.probe = &probe
 	r.run = slow_run
 	r.finish = reply_finish
@@ -153,4 +150,73 @@ test_deadline_fires :: proc(t: ^testing.T) {
 	testing.expect(t, !probe.replied) // no normal reply happened
 	testing.expect_value(t, probe.timeout_tid, sync.current_thread_id())
 	testing.expect_value(t, probe.finish_tid, sync.current_thread_id())
+}
+
+// --- test 3: with two loops sharing one executor, each completion is delivered
+// back to the loop that submitted it (not some other loop) ---
+
+ML_Ctx :: struct {
+	ex:         ^exec.Executor,
+	tid:        int, // this loop thread's id
+	finish_tid: int, // the thread finish actually ran on
+	done:       bool,
+}
+
+ml_run :: proc(jb: ^exec.Job, conn: ^sql.Conn) {
+	time.sleep(5 * time.Millisecond) // make sure it really round-trips through a worker
+}
+
+ml_finish :: proc(jb: ^exec.Job) {
+	r := cast(^Req)jb
+	ctx := cast(^ML_Ctx)r.userdata
+	ctx.finish_tid = sync.current_thread_id()
+	ctx.done = true
+}
+
+ml_loop_thread :: proc(ctx: ^ML_Ctx) {
+	nbio.acquire_thread_event_loop()
+	defer nbio.release_thread_event_loop()
+	ctx.tid = sync.current_thread_id()
+
+	r := exec.new_job(ctx.ex, Req)
+	r.run = ml_run
+	r.finish = ml_finish
+	r.userdata = rawptr(ctx)
+	submit_db(ctx.ex, &r.req) // binds r.loop to THIS thread's loop
+
+	start := time.tick_now()
+	for !ctx.done {
+		nbio.tick(5 * time.Millisecond)
+		if time.tick_since(start) > 3 * time.Second {
+			break
+		}
+	}
+}
+
+@(test)
+test_multi_loop_delivery :: proc(t: ^testing.T) {
+	db, oerr := sql.open(&sqlite.driver, ":memory:")
+	testing.expect_value(t, oerr, nil)
+
+	// One shared executor, two independent nbio loops on two threads.
+	ex: exec.Executor
+	exec.executor_init(&ex, db, 2, 2, 4, completer())
+	defer exec.executor_shutdown(&ex)
+
+	a := ML_Ctx{ex = &ex}
+	b := ML_Ctx{ex = &ex}
+
+	ta := thread.create_and_start_with_poly_data(&a, ml_loop_thread)
+	tb := thread.create_and_start_with_poly_data(&b, ml_loop_thread)
+	thread.join(ta)
+	thread.join(tb)
+	thread.destroy(ta)
+	thread.destroy(tb)
+
+	testing.expect(t, a.done)
+	testing.expect(t, b.done)
+	testing.expect(t, a.tid != b.tid)
+	// the key assertion: each request's finish ran on ITS OWN loop thread.
+	testing.expect_value(t, a.finish_tid, a.tid)
+	testing.expect_value(t, b.finish_tid, b.tid)
 }
