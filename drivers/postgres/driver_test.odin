@@ -2,6 +2,7 @@ package postgres
 
 import "core:log"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "core:thread"
 import "core:time"
@@ -325,17 +326,26 @@ test_interrupt_cancels_query :: proc(t: ^testing.T) {
 	rows, qerr := sql.query(&conn, "SELECT pg_sleep(10)")
 	// The cancellation may surface from query() itself or, in the streaming
 	// (simple) protocol, mid-iteration via rows_err — accept either.
-	got_err := qerr != nil
+	err = qerr
 	n := 0
 	if qerr == nil {
 		for sql.next(&rows) {n += 1}
-		if sql.rows_err(&rows) != nil {got_err = true}
+		err = sql.rows_err(&rows)
 		sql.rows_close(&rows)
 	}
 	elapsed := time.tick_since(start)
-	log.infof("pg_sleep(10): elapsed=%v qerr=%v rows=%d got_err=%v", elapsed, qerr, n, got_err)
 
-	// Cancelled: an error surfaced, and well before the 10s the sleep would take.
-	testing.expect(t, got_err)
+	// The error must specifically be the server's cancellation, not some
+	// unrelated quick failure (PostgreSQL: "canceling statement due to user
+	// request", SQLSTATE 57014).
+	msg: string
+	#partial switch e in err {
+	case sql.Driver_Error:
+		msg = e.message
+	}
+	log.infof("pg_sleep(10): elapsed=%v err=%q", elapsed, msg)
+
+	testing.expect(t, err != nil)
+	testing.expect(t, strings.contains(msg, "cancel"), "error should report query cancellation")
 	testing.expect(t, elapsed < 3 * time.Second)
 }

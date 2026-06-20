@@ -64,8 +64,12 @@ completer :: proc() -> exec.Completer {
 // deadline: if it elapses before the job finishes, on_timeout runs on the loop
 // thread (write a 504) and the in-flight query is interrupted; the eventual
 // completion is then dropped without a second response. MUST be called on the
-// loop thread (it allocates nbio ops). Returns false if the executor rejected
-// the job (draining), in which case the caller still owns the Request.
+// loop thread (it allocates nbio ops).
+//
+// Returns false if the executor rejected the job (draining). On false the caller
+// still owns the Request and MUST free it with exec.job_destroy(&r.job) (the
+// nbio ops submit prepped are already reclaimed here); on true, the bridge frees
+// the job after finish runs.
 submit :: proc(
 	ex: ^exec.Executor,
 	r: ^Request,

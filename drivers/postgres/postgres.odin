@@ -72,7 +72,7 @@ driver := drv.Driver {
 @(private)
 Pg_Conn :: struct {
 	socket:       net.TCP_Socket,
-	endpoint:     string, // "host:port", owned — used to dial a cancel connection
+	cancel_ep:    net.Endpoint, // resolved once at open; used to dial a cancel connection without re-resolving DNS
 	allocator:    mem.Allocator,
 	rbuf:         [dynamic]u8, // last-read message payload (reused; values borrow it)
 	wbuf:         [dynamic]u8, // outgoing message scratch (reused)
@@ -145,9 +145,18 @@ pg_open :: proc(
 	conn.wbuf = make([dynamic]u8, allocator)
 
 	endpoint := fmt.aprintf("%s:%s", d.host, d.port, allocator = allocator)
-	conn.endpoint = endpoint // owned by conn; freed in close/open_fail
+	defer delete(endpoint, allocator)
 
-	socket, neterr := net.dial_tcp_from_hostname_and_port_string(endpoint)
+	// Resolve once here and dial the resolved endpoint, caching it for interrupt()
+	// so a cancel never re-resolves DNS (which would block the caller's thread).
+	ep4, ep6, reserr := net.resolve(endpoint)
+	if reserr != nil {
+		e := conn_errorf(conn, "postgres: failed to resolve %s: %v", endpoint, reserr)
+		return open_fail(conn), e
+	}
+	conn.cancel_ep = ep4 if ep4.address != nil else ep6
+
+	socket, neterr := net.dial_tcp_from_endpoint(conn.cancel_ep)
 	if neterr != nil {
 		e := conn_errorf(conn, "postgres: failed to connect to %s: %v", endpoint, neterr)
 		return open_fail(conn), e
@@ -178,14 +187,21 @@ pg_open :: proc(
 //
 // It is best-effort and safe to call from another thread: any failure (no key
 // data, dial/send error) is ignored. The cancel connection is plaintext; a
-// server that strictly requires TLS for all connections may refuse it (a known
-// limitation, matching the driver's opt-in TLS scope).
+// server that strictly requires TLS for all connections may refuse it, in which
+// case the query is not cancellable (a known limitation of the driver's opt-in
+// TLS scope).
+//
+// The endpoint is resolved once at open and cached, so this never re-resolves
+// DNS. The connect itself is still blocking with no timeout, so against a dead
+// or black-holed server this call can block the calling (watchdog) thread for
+// the OS connect timeout. Cancellation is best-effort; don't rely on it
+// returning promptly when the server is unreachable.
 @(private)
 pg_interrupt :: proc(handle: drv.Conn_Handle) {
 	conn := cast(^Pg_Conn)handle
 	if conn == nil || conn.backend_pid == 0 {return} // no BackendKeyData → can't cancel
 
-	sock, derr := net.dial_tcp_from_hostname_and_port_string(conn.endpoint)
+	sock, derr := net.dial_tcp_from_endpoint(conn.cancel_ep)
 	if derr != nil {return}
 	defer net.close(sock)
 
@@ -252,7 +268,6 @@ setup_tls :: proc(conn: ^Pg_Conn, mode: TLS_Mode, host: string) -> drv.Error {
 open_fail :: proc(conn: ^Pg_Conn) -> drv.Conn_Handle {
 	delete(conn.rbuf)
 	delete(conn.wbuf)
-	if conn.endpoint != "" {delete(conn.endpoint, conn.allocator)}
 	free(conn, conn.allocator)
 	return nil
 }
@@ -270,7 +285,6 @@ pg_close_conn :: proc(handle: drv.Conn_Handle) -> drv.Error {
 
 	delete(conn.rbuf)
 	delete(conn.wbuf)
-	if conn.endpoint != "" {delete(conn.endpoint, conn.allocator)}
 	if conn.last_error != "" {delete(conn.last_error, conn.allocator)}
 	free(conn, conn.allocator)
 	return nil

@@ -93,8 +93,11 @@ Executor :: struct {
 	io_pool:   thread.Pool,
 	completer: Completer,
 
-	// worker->connection map, published once at startup (indexed by the worker's
-	// stable thread.user_index). Read on cancellation; never written per-submit.
+	// worker->connection map, indexed by the worker's stable thread.user_index.
+	// Written once per worker at startup (init hook) and once at shutdown (fini
+	// hook clears it); read by cancel_all_inflight. Never written per-submit.
+	// Accessed atomically on every side since init/fini and cancellation run on
+	// different threads.
 	worker_conns: []sql.Conn_Handle,
 
 	draining:    bool, // atomic — stops new admission; signals cooperative cancel
@@ -146,7 +149,7 @@ db_worker_init :: proc(t: ^thread.Thread, data: rawptr) {
 	}
 	tls_conn = conn
 	tls_ok = true
-	ex.worker_conns[t.user_index] = conn.handle
+	intrinsics.atomic_store(&ex.worker_conns[t.user_index], conn.handle)
 }
 
 // db_worker_fini runs once per DB worker at shutdown (during pool join) and
@@ -159,7 +162,7 @@ db_worker_fini :: proc(t: ^thread.Thread, data: rawptr) {
 		sql.checkin(&tls_conn)
 		tls_ok = false
 	}
-	ex.worker_conns[t.user_index] = nil
+	intrinsics.atomic_store(&ex.worker_conns[t.user_index], sql.Conn_Handle(nil))
 }
 
 // The worker's pinned connection lives in thread-local storage. DB-pool workers
@@ -192,6 +195,14 @@ worker_entry :: proc(t: thread.Task) {
 	}
 
 	intrinsics.atomic_store(&job.conn_handle, nil)
+
+	// Keep this pool's completed-task list bounded. pool_do_work appends one
+	// record per task to tasks_done and only pool_pop_done removes them, so a
+	// long-running server (which never calls drain/reap itself) would otherwise
+	// leak one Task record per request. Drain here, before complete() — while
+	// job is still valid — reaping the pool this worker belongs to.
+	reap_pool(pool_for(job.exec, job.lane))
+
 	complete(job)
 }
 
@@ -274,12 +285,16 @@ dispatch :: proc(ex: ^Executor, job: ^Job, lane: Lane, background: bool) -> bool
 	if intrinsics.atomic_load(&ex.draining) {
 		return false
 	}
-	job.exec = ex
+	// job.exec was already set by new_job; only lane/background are per-submit.
 	job.lane = lane
 	job.background = background
-	pool := &ex.db_pool if lane == .DB else &ex.io_pool
-	thread.pool_add_task(pool, ex.alloc, worker_entry, job)
+	thread.pool_add_task(pool_for(ex, lane), ex.alloc, worker_entry, job)
 	return true
+}
+
+@(private)
+pool_for :: proc(ex: ^Executor, lane: Lane) -> ^thread.Pool {
+	return &ex.db_pool if lane == .DB else &ex.io_pool
 }
 
 // --- Cancellation ---
@@ -296,6 +311,12 @@ is_cancelled :: proc(job: ^Job) -> bool {
 // supports it, interrupts that query (which returns a driver error). Safe to
 // call from any thread. A query already returned, or a driver without interrupt
 // support, simply relies on the cooperative flag.
+//
+// LIFETIME: only valid while the executor is running. Do not call cancel (or
+// otherwise act on a job) after executor_shutdown has returned — shutdown closes
+// the connections, so interrupting one would touch freed memory. In the nbio
+// bridge this means the loop must stop processing deadlines before the executor
+// is shut down (the usual order: stop the server loop, then executor_shutdown).
 cancel :: proc(job: ^Job) {
 	intrinsics.atomic_store(&job.cancelled, true)
 	if h := intrinsics.atomic_load(&job.conn_handle); h != nil {
@@ -307,8 +328,8 @@ cancel :: proc(job: ^Job) {
 // unstick workers running slow queries so the pool can join promptly.
 @(private)
 cancel_all_inflight :: proc(ex: ^Executor) {
-	for h in ex.worker_conns {
-		if h != nil {
+	for i in 0 ..< len(ex.worker_conns) {
+		if h := intrinsics.atomic_load(&ex.worker_conns[i]); h != nil {
 			sql.interrupt(ex.db, h)
 		}
 	}
@@ -335,17 +356,19 @@ drain :: proc(ex: ^Executor, timeout: time.Duration) -> bool {
 	return true
 }
 
-// reap discards finished Task bookkeeping from both pools. A long-running
-// server should call it periodically (the pool retains a record per completed
-// task until popped); our Job memory is freed separately on completion.
+// reap discards finished Task bookkeeping from both pools. Workers already reap
+// their own pool after each task (see worker_entry), so this is mostly used by
+// drain/shutdown to clear the residue; our Job memory is freed separately on
+// completion.
 reap :: proc(ex: ^Executor) {
+	reap_pool(&ex.db_pool)
+	reap_pool(&ex.io_pool)
+}
+
+@(private)
+reap_pool :: proc(p: ^thread.Pool) {
 	for {
-		if _, ok := thread.pool_pop_done(&ex.db_pool); !ok {
-			break
-		}
-	}
-	for {
-		if _, ok := thread.pool_pop_done(&ex.io_pool); !ok {
+		if _, ok := thread.pool_pop_done(p); !ok {
 			break
 		}
 	}
@@ -365,6 +388,11 @@ reap :: proc(ex: ^Executor) {
 // It then joins both pools (which runs the fini hooks that check every pinned
 // connection back in) and only THEN calls sql.close, since closing frees the DB
 // while a live worker could still touch it.
+//
+// The final pool_join is unconditional: a run() that never returns (an IO-lane
+// job that ignores is_cancelled, or a DB query in a driver without interrupt
+// support) can still block shutdown indefinitely, since a worker thread cannot
+// be force-killed. Escalation only unsticks DB queries the driver can interrupt.
 executor_shutdown :: proc(ex: ^Executor, grace: time.Duration = 0) {
 	intrinsics.atomic_store(&ex.draining, true)
 

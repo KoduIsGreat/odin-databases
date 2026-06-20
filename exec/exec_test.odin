@@ -3,6 +3,7 @@ package exec
 import "base:intrinsics"
 import "core:sync"
 import "core:testing"
+import "core:thread"
 import "core:time"
 
 import "database:sql"
@@ -262,4 +263,36 @@ test_graceful_shutdown_drains_queue :: proc(t: ^testing.T) {
 	// them all run rather than dropping the backlog.
 	executor_shutdown(&ex, 5 * time.Second)
 	testing.expect_value(t, intrinsics.atomic_load(&counter), N)
+}
+
+// --- test 7: the pool's completed-task list stays bounded (no per-request leak) ---
+
+noop_run :: proc(jb: ^Job, conn: ^sql.Conn) {}
+
+@(test)
+test_done_list_bounded :: proc(t: ^testing.T) {
+	db, oerr := sql.open(&sqlite.driver, ":memory:")
+	testing.expect_value(t, oerr, nil)
+
+	WORKERS :: 2
+	ex: Executor
+	executor_init(&ex, db, WORKERS, 1, 4, inline_completer())
+	defer executor_shutdown(&ex)
+
+	N :: 60
+	for _ in 0 ..< N {
+		j := new_job(&ex, Inc_Job)
+		j.run = noop_run
+		testing.expect(t, submit_db(&ex, &j.base))
+	}
+
+	// Wait for everything to run WITHOUT calling drain/reap (those would also
+	// clear the done list and mask a leak). Workers reap their own pool per task,
+	// so the leftover done-records should be a small constant (≤ one per worker
+	// for the last task each ran), never ~N.
+	for thread.pool_num_outstanding(&ex.db_pool) > 0 {
+		time.sleep(1 * time.Millisecond)
+	}
+	done := thread.pool_num_done(&ex.db_pool)
+	testing.expect(t, done <= WORKERS, "completed-task list grew unbounded — worker reap missing")
 }
