@@ -13,6 +13,9 @@
 //   - Streaming rows: values are decoded per-DataRow and borrow the connection
 //     read buffer, matching the driver contract's borrowed-value semantics
 //     (sql.scan clones what it keeps).
+//   - Cancellation: interrupt() issues a protocol CancelRequest over a separate
+//     connection (using the BackendKeyData captured at startup), so a slow query
+//     can be aborted from another thread. The cancel connection is plaintext.
 //
 // Usage mirrors every other driver — pass &postgres.driver to sql.open:
 //
@@ -61,6 +64,7 @@ driver := drv.Driver {
 	tx_rollback  = pg_tx_rollback,
 	lock         = pg_lock,
 	unlock       = pg_unlock,
+	interrupt    = pg_interrupt,
 }
 
 // --- Internal wrapper types ---
@@ -68,12 +72,18 @@ driver := drv.Driver {
 @(private)
 Pg_Conn :: struct {
 	socket:       net.TCP_Socket,
+	endpoint:     string, // "host:port", owned — used to dial a cancel connection
 	allocator:    mem.Allocator,
 	rbuf:         [dynamic]u8, // last-read message payload (reused; values borrow it)
 	wbuf:         [dynamic]u8, // outgoing message scratch (reused)
 	last_error:   string, // owned; replaced per error, valid until the next one
 	stmt_counter: int,
 	tx_status:    u8, // last ReadyForQuery status ('I' idle, 'T' in tx, 'E' failed)
+
+	// BackendKeyData captured during startup; lets interrupt() issue a protocol
+	// CancelRequest for this session from another thread (see pg_interrupt).
+	backend_pid:    i32,
+	backend_secret: i32,
 
 	// TLS: non-nil once a handshake has happened, after which send_all/recv_exact
 	// route through tls_write/tls_read instead of the raw socket. Both are opaque
@@ -135,7 +145,7 @@ pg_open :: proc(
 	conn.wbuf = make([dynamic]u8, allocator)
 
 	endpoint := fmt.aprintf("%s:%s", d.host, d.port, allocator = allocator)
-	defer delete(endpoint, allocator)
+	conn.endpoint = endpoint // owned by conn; freed in close/open_fail
 
 	socket, neterr := net.dial_tcp_from_hostname_and_port_string(endpoint)
 	if neterr != nil {
@@ -156,6 +166,43 @@ pg_open :: proc(
 		return open_fail(conn), e
 	}
 	return drv.Conn_Handle(conn), nil
+}
+
+// pg_interrupt aborts whatever statement is running on this connection by
+// issuing a protocol-level CancelRequest. PostgreSQL requires the cancel to come
+// over a SEPARATE connection (the session's own socket is busy being read by the
+// worker thread running the query), so this dials a fresh, short-lived
+// connection to the same server, sends the 16-byte CancelRequest carrying the
+// session's BackendKeyData, and closes it. The server then aborts the running
+// query, which surfaces to the worker as an ErrorResponse (query canceled).
+//
+// It is best-effort and safe to call from another thread: any failure (no key
+// data, dial/send error) is ignored. The cancel connection is plaintext; a
+// server that strictly requires TLS for all connections may refuse it (a known
+// limitation, matching the driver's opt-in TLS scope).
+@(private)
+pg_interrupt :: proc(handle: drv.Conn_Handle) {
+	conn := cast(^Pg_Conn)handle
+	if conn == nil || conn.backend_pid == 0 {return} // no BackendKeyData → can't cancel
+
+	sock, derr := net.dial_tcp_from_hostname_and_port_string(conn.endpoint)
+	if derr != nil {return}
+	defer net.close(sock)
+
+	msg: [16]u8
+	be_put32(msg[0:], 16) // message length
+	be_put32(msg[4:], 80877102) // CancelRequest code (1234 << 16 | 5678)
+	be_put32(msg[8:], u32(conn.backend_pid))
+	be_put32(msg[12:], u32(conn.backend_secret))
+	_, _ = net.send_tcp(sock, msg[:])
+}
+
+@(private)
+be_put32 :: proc(b: []u8, v: u32) {
+	b[0] = u8(v >> 24)
+	b[1] = u8(v >> 16)
+	b[2] = u8(v >> 8)
+	b[3] = u8(v)
 }
 
 // setup_tls negotiates and establishes TLS per the requested sslmode. It is a
@@ -205,6 +252,7 @@ setup_tls :: proc(conn: ^Pg_Conn, mode: TLS_Mode, host: string) -> drv.Error {
 open_fail :: proc(conn: ^Pg_Conn) -> drv.Conn_Handle {
 	delete(conn.rbuf)
 	delete(conn.wbuf)
+	if conn.endpoint != "" {delete(conn.endpoint, conn.allocator)}
 	free(conn, conn.allocator)
 	return nil
 }
@@ -222,6 +270,7 @@ pg_close_conn :: proc(handle: drv.Conn_Handle) -> drv.Error {
 
 	delete(conn.rbuf)
 	delete(conn.wbuf)
+	if conn.endpoint != "" {delete(conn.endpoint, conn.allocator)}
 	if conn.last_error != "" {delete(conn.last_error, conn.allocator)}
 	free(conn, conn.allocator)
 	return nil

@@ -3,6 +3,8 @@ package postgres
 import "core:log"
 import "core:os"
 import "core:testing"
+import "core:thread"
+import "core:time"
 
 import sql "database:sql"
 
@@ -275,4 +277,65 @@ try_lock :: proc(t: ^testing.T, conn: ^sql.Conn, key: i64) -> bool {
 	got: bool
 	testing.expect_value(t, sql.scan(&row, &got), nil)
 	return got
+}
+
+// --- Cancellation (driver.interrupt via protocol CancelRequest) ---
+
+@(private = "file")
+Cancel_Ctx :: struct {
+	db:     ^sql.DB,
+	handle: sql.Conn_Handle,
+}
+
+@(private = "file")
+canceller :: proc(ctx: ^Cancel_Ctx) {
+	// Wait until the slow query is actually running on the server, then cancel
+	// it from this (separate) thread, the way a watchdog/event loop would.
+	time.sleep(300 * time.Millisecond)
+	sql.interrupt(ctx.db, ctx.handle)
+}
+
+// A long-running query is aborted by interrupt() from another thread, returning
+// an error promptly instead of running to completion.
+@(test)
+test_interrupt_cancels_query :: proc(t: ^testing.T) {
+	dsn, ok := test_dsn()
+	if !ok {return}
+
+	db, err := sql.open(&driver, dsn)
+	testing.expect_value(t, err, nil)
+	if err != nil {return}
+	defer sql.close(db)
+
+	testing.expect(t, sql.supports_interrupt(db))
+
+	conn, cerr := sql.checkout(db)
+	testing.expect_value(t, cerr, nil)
+	if cerr != nil {return}
+	defer sql.checkin(&conn)
+
+	ctx := Cancel_Ctx{db, conn.handle}
+	th := thread.create_and_start_with_poly_data(&ctx, canceller)
+	defer {
+		thread.join(th)
+		thread.destroy(th)
+	}
+
+	start := time.tick_now()
+	rows, qerr := sql.query(&conn, "SELECT pg_sleep(10)")
+	// The cancellation may surface from query() itself or, in the streaming
+	// (simple) protocol, mid-iteration via rows_err — accept either.
+	got_err := qerr != nil
+	n := 0
+	if qerr == nil {
+		for sql.next(&rows) {n += 1}
+		if sql.rows_err(&rows) != nil {got_err = true}
+		sql.rows_close(&rows)
+	}
+	elapsed := time.tick_since(start)
+	log.infof("pg_sleep(10): elapsed=%v qerr=%v rows=%d got_err=%v", elapsed, qerr, n, got_err)
+
+	// Cancelled: an error surfaced, and well before the 10s the sleep would take.
+	testing.expect(t, got_err)
+	testing.expect(t, elapsed < 3 * time.Second)
 }

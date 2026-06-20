@@ -193,5 +193,6 @@ main :: proc() {
 	err := http.listen_and_serve(&s, http.router_handler(&router))
 	fmt.printfln("server stopped: %v", err)
 
-	exec.executor_shutdown(&ex)
+	// Graceful: let in-flight queries finish (up to 5s) before closing the DB.
+	exec.executor_shutdown(&ex, 5 * time.Second)
 }

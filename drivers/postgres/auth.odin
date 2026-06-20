@@ -78,8 +78,14 @@ finish_startup :: proc(conn: ^Pg_Conn) -> drv.Error {
 		case 'Z': // ReadyForQuery
 			if len(payload) > 0 {conn.tx_status = payload[0]}
 			return nil
-		case 'S', 'K', 'N':
-		// ParameterStatus / BackendKeyData / NoticeResponse — ignore
+		case 'K': // BackendKeyData — pid + secret, kept for interrupt()/CancelRequest
+			if len(payload) >= 8 {
+				kr := Reader{data = payload}
+				conn.backend_pid = rd_i32(&kr)
+				conn.backend_secret = rd_i32(&kr)
+			}
+		case 'S', 'N':
+		// ParameterStatus / NoticeResponse — ignore
 		case 'E':
 			return parse_error_response(conn, payload)
 		case:

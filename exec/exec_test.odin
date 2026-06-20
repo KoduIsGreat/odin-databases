@@ -228,3 +228,38 @@ test_inline_completer :: proc(t: ^testing.T) {
 	testing.expect(t, drain(&ex, 2 * time.Second))
 	testing.expect_value(t, intrinsics.atomic_load(&counter), 5)
 }
+
+// --- test 6: graceful shutdown drains queued work instead of dropping it ---
+
+Sleep_Job :: struct {
+	using base: Job,
+}
+
+sleep_run :: proc(jb: ^Job, conn: ^sql.Conn) {
+	time.sleep(20 * time.Millisecond)
+	p := cast(^int)jb.userdata
+	intrinsics.atomic_add(p, 1)
+}
+
+@(test)
+test_graceful_shutdown_drains_queue :: proc(t: ^testing.T) {
+	db, oerr := sql.open(&sqlite.driver, ":memory:")
+	testing.expect_value(t, oerr, nil)
+
+	ex: Executor
+	executor_init(&ex, db, 2, 1, 16, inline_completer()) // 2 DB workers
+
+	counter: int
+	N :: 10
+	for _ in 0 ..< N {
+		j := new_job(&ex, Sleep_Job)
+		j.run = sleep_run
+		j.userdata = &counter
+		testing.expect(t, submit_db(&ex, &j.base))
+	}
+
+	// 10 jobs over 2 workers means ~8 are queued; a graceful shutdown must let
+	// them all run rather than dropping the backlog.
+	executor_shutdown(&ex, 5 * time.Second)
+	testing.expect_value(t, intrinsics.atomic_load(&counter), N)
+}

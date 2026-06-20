@@ -352,16 +352,30 @@ reap :: proc(ex: ^Executor) {
 }
 
 // executor_shutdown stops the executor and closes the database. It marks the
-// executor draining (rejecting new submits), interrupts in-flight queries, then
-// joins both pools — which finishes started tasks and runs the fini hooks that
-// check every pinned connection back in. Only then is sql.close called, since
-// closing frees the DB while a live worker could still touch it.
+// executor draining (rejecting new submits), then either stops immediately or
+// drains gracefully depending on `grace`:
 //
-// Queued-but-unstarted tasks are dropped (their job memory is not reclaimed);
-// call drain() first if you need queued work to complete.
-executor_shutdown :: proc(ex: ^Executor) {
+//   - grace == 0 (default): interrupt in-flight queries and stop. Queued-but-
+//     unstarted tasks are dropped (their job memory is not reclaimed).
+//   - grace  > 0: let the workers finish queued + in-flight work for up to
+//     `grace`. If they don't finish in time, escalate — interrupt running
+//     queries and allow the interrupted ones a final `grace` to return — so the
+//     queue empties and nothing is dropped.
+//
+// It then joins both pools (which runs the fini hooks that check every pinned
+// connection back in) and only THEN calls sql.close, since closing frees the DB
+// while a live worker could still touch it.
+executor_shutdown :: proc(ex: ^Executor, grace: time.Duration = 0) {
 	intrinsics.atomic_store(&ex.draining, true)
-	cancel_all_inflight(ex)
+
+	if grace > 0 {
+		if !drain(ex, grace) {
+			cancel_all_inflight(ex) // escalate: unstick slow queries
+			drain(ex, grace) // let the interrupted ones return so the queue empties
+		}
+	} else {
+		cancel_all_inflight(ex)
+	}
 
 	thread.pool_join(&ex.db_pool)
 	thread.pool_join(&ex.io_pool)
