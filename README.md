@@ -387,6 +387,7 @@ or `$ODB_INSTALL_DIR`); `just uninstall [dir]` removes it.
 | `database:driver` | `driver/` | driver contract (`Driver` vtable, `Value`, `Error`) |
 | `database:sqlbuilder` | `sqlbuilder/` | typed SQL builder |
 | `database:migrate` | `migrate/` | schema-migration runner (`up`/`down`/`to`/`status`) |
+| `database:exec` | `exec/` | async execution layer — runs blocking `sql` work on worker threads with pinned connections, lanes, bounded background jobs, and cancellation (for non-blocking servers) |
 | `database:drivers/sqlite` | `drivers/sqlite/` | SQLite driver |
 | `database:drivers/postgres` | `drivers/postgres/` | pure-Odin PostgreSQL driver ([README](drivers/postgres/README.md)) |
 | `database:drivers/duckdb` | `drivers/duckdb/` | preliminary DuckDB driver (C API) ([README](drivers/duckdb/README.md)) |

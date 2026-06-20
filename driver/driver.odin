@@ -73,6 +73,21 @@ Driver :: struct {
 	lock:         proc(conn: Conn_Handle, key: i64) -> Error,
 	unlock:       proc(conn: Conn_Handle, key: i64) -> Error,
 
+	// Cancellation (OPTIONAL — may be nil).
+	//
+	// interrupt aborts any statement currently executing on the given connection.
+	// Unlike every other proc in this vtable, it is intended to be called from a
+	// DIFFERENT thread than the one running the statement — that is its whole
+	// purpose: a watchdog/event-loop thread aborts a slow query running on a
+	// worker. The in-flight exec/query/rows_next call then returns a driver error.
+	//
+	// It must therefore be safe to call concurrently with that connection's own
+	// execution. Drivers that can't honour that leave it nil; callers branch on
+	// presence (see sql.supports_interrupt). SQLite implements it via
+	// sqlite3_interrupt (a thread-safe atomic flag); a networked driver would
+	// implement it via its protocol's cancel request.
+	interrupt:    proc(conn: Conn_Handle),
+
 	// Driver-owned opaque state (e.g. library handle, shared config).
 	// Passed to open() so drivers can access shared resources.
 	data:         rawptr,

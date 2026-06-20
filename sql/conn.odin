@@ -97,3 +97,24 @@ advisory_unlock :: proc(conn: ^Conn, key: i64) -> Error {
 	if conn.driver.unlock == nil {return nil}
 	return conn.driver.unlock(conn.handle, key)
 }
+
+// --- Cancellation ---
+//
+// interrupt aborts whatever statement is currently running on a connection,
+// from another thread. It takes a DB + raw Conn_Handle (rather than a ^Conn)
+// precisely because the connection is owned and in-use by a different thread —
+// the worker running the query — while a watchdog/event-loop thread calls this
+// to abort it. The interrupted call returns a Driver_Error. No-op if the driver
+// does not support it (check supports_interrupt). See the driver contract.
+
+// supports_interrupt reports whether the DB's driver can abort a running query.
+supports_interrupt :: proc(db: ^DB) -> bool {
+	return db.driver.interrupt != nil
+}
+
+// interrupt aborts any statement currently executing on handle. Safe to call
+// from a thread other than the one running the statement. No-op if unsupported.
+interrupt :: proc(db: ^DB, handle: Conn_Handle) {
+	if db.driver.interrupt == nil {return}
+	db.driver.interrupt(handle)
+}
