@@ -54,6 +54,7 @@ check-all:
     odin check sqlbuilder -no-entry-point {{coll}}
     odin check migrate -no-entry-point {{coll}}
     odin check exec -no-entry-point {{coll}}
+    odin check exec/nbio -no-entry-point {{coll}}
     odin check examples/quickstart {{coll}}
     odin check examples/query_builder {{coll}}
     odin check examples/introspection {{coll}}
@@ -90,6 +91,7 @@ test:
     odin test sqlbuilder {{coll}}
     odin test migrate {{coll}}
     odin test exec {{coll}}
+    odin test exec/nbio {{coll}}
     odin test tools/querygen {{coll}}
     odin test tools/migragen {{coll}}
     odin test tools/migranew {{coll}}
